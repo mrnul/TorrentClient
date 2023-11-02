@@ -1,1 +1,1 @@
-from .TorrentClientSocket import TorrentClientSocket
+from .torrent_client_socket import TorrentClientSocket
