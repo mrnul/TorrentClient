@@ -1,5 +1,4 @@
 import hashlib
-import socket
 from typing import Literal
 
 import bencdec
@@ -46,28 +45,4 @@ def get_message_from_bytes(data: bytes, byteorder: Literal['little', 'big'] = 'b
                           begin=int.from_bytes(data[9:13], byteorder=byteorder),
                           length=int.from_bytes(data[13:17], byteorder=byteorder))
         case _:
-            print(f"Unknown message - length:{msg_len} | id:{msg_id}")
             return Unknown(msg_len, msg_id, data[5:])
-
-
-def recv_n_bytes(s: socket.socket, n: int, seconds: int = -1) -> bytes:
-    if n == 0:
-        return b''
-
-    data = b''
-    count = 0
-    while len(data) != n:
-        try:
-            tmp_data = s.recv(n - len(data))
-            if len(tmp_data) <= 0:
-                return b''
-            count = 0
-        except TimeoutError:
-            count += 1
-            if 0 < seconds <= count:
-                return b''
-            continue
-        except OSError:
-            return b''
-        data += tmp_data
-    return data

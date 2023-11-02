@@ -1,15 +1,21 @@
 import queue
-import socket
 import threading
 
+from torrent_client_socket import TorrentClientSocket
+from logger import Logger
 from messages import Message, HandShake, BitField, Request, Unchoke, Piece, KeepAlive
 from messages.terminate import Terminate
 from misc import utils
 
 
 class Peer:
+    keep_alive_timeout = 100
+
     def __init__(self, ip: str, port: int, torrent: dict):
-        self.s: socket.socket | None = None
+        self.logger = Logger(ip, f'{ip} - {port}.log', 'DEBUG').get()
+        self.logger.info('Initializing Peer')
+
+        self.s: TorrentClientSocket = TorrentClientSocket()
         self.am_choking: bool = False
         self.am_interested: bool = False
         self.am_choked: bool = False
@@ -27,68 +33,56 @@ class Peer:
 
         self.tx_thread = threading.Thread(target=self._tx_worker)
         self.rx_thread = threading.Thread(target=self._rx_worker)
+        self.logger.info('Initialization complete')
 
     def _tx_worker(self):
-        idle_count = 0
+        self.logger.info("Thread started")
         while True:
             try:
-                item = self.tx_queue.get(block=True, timeout=1.0)
+                item = self.tx_queue.get(block=True, timeout=self.keep_alive_timeout)
+                if isinstance(item, Terminate):
+                    self.logger.info(item.reason)
+                    break
             except queue.Empty:
-                idle_count += 1
-                print(f'TX - No data... {idle_count}')
-                if idle_count >= 30:
-                    self.send_msg(Request(index=0, begin=0, length=1024))
+                self.enqueue_msg(KeepAlive())
                 continue
-            if isinstance(item, Terminate):
-                break
-            print(f"TX - Data: {item} | {len(item.to_bytes())}")
-            idle_count = 0
+
+            self.logger.debug(item)
             self.s.send(item.to_bytes())
-        print('TX - Goodbye')
+        self.logger.info('Thread terminated')
 
     def _rx_worker(self):
-        def recv_handshake():
-            pstrlen = int.from_bytes(utils.recv_n_bytes(self.s, 1))
-            data = utils.recv_n_bytes(self.s, 48 + pstrlen)
-            return data
+        self.logger.info('Thread started')
+        handshake = self.s.recv_handshake()
+        if isinstance(handshake, Terminate):
+            self.logger.error(handshake.reason)
+            self.tx_queue.put(Terminate(handshake.reason))
+            return
 
-        print(f"RX - Handshake: {recv_handshake()}")
-        self.send_msg(Unchoke())
+        self.logger.debug(handshake)
 
         while True:
-            msg_len = utils.recv_n_bytes(self.s, 4)
-            if len(msg_len) == 0:
-                print(f'Client disconnected')
+            msg = self.s.recv_peer_msg()
+            self.rx_queue.put(msg)
+            if isinstance(msg, Terminate):
+                self.logger.info(msg.reason)
                 break
-
-            msg_len_int = int.from_bytes(msg_len)
-            if msg_len_int < 0:
-                print(f"Error in msg_len_int: {msg_len_int}")
-                break
-
-            uid_payload = utils.recv_n_bytes(self.s, msg_len_int)
-            msg = utils.get_message_from_bytes(msg_len + uid_payload)
-            if isinstance(msg, KeepAlive):
-                self.send_msg(KeepAlive())
 
             if isinstance(msg, BitField):
                 self.bitfield = msg.bitfield
 
             if isinstance(msg, Unchoke):
-                self.send_msg(Request(index=0, begin=0, length=1024))
+                self.enqueue_msg(Request(index=0, begin=0, length=1024))
 
-            if isinstance(msg, Piece):
-                print(f"RX Piece - {msg.to_bytes()}")
+            self.logger.debug(msg)
 
-            print(f"RX - {msg}")
+        self.tx_queue.put(Terminate('tx stopped'))
+        self.logger.debug('Thread terminated')
 
-        print('RX - Goodbye')
-        self.tx_queue.put(Terminate())
-
-    def send_msg(self, msg: Message):
+    def enqueue_msg(self, msg: Message):
         self.tx_queue.put(msg)
 
-    def recv_msg(self, blocking: bool = True) -> Message | None:
+    def dequeue_msg(self, blocking: bool = True) -> Message | None:
         msg: Message | None = None
         try:
             msg = self.rx_queue.get(block=blocking)
@@ -98,19 +92,19 @@ class Peer:
 
     def start_communication(self, client_id: bytes) -> bool:
         try:
-            self.s = socket.create_connection((self.ip, self.port), timeout=1.0)
+            self.s.connect((self.ip, self.port))
         except TimeoutError:
-            print("Could not connect to peer")
+            self.logger.error("Could not connect to peer")
             return False
         self.tx_thread.start()
         self.rx_thread.start()
 
-        self.send_msg(HandShake(info_hash=utils.get_info_sha1_hash(self.torrent['info']),
-                                peer_id=client_id))
+        self.enqueue_msg(HandShake(info_hash=utils.get_info_sha1_hash(self.torrent['info']),
+                                   peer_id=client_id))
 
     def stop_communication(self):
-        self.tx_queue.put(Terminate())
-        self.rx_queue.put(Terminate())
+        self.tx_queue.put(Terminate(f'stop_communication called'))
+        self.rx_queue.put(Terminate(f'stop_communication called'))
         self.s.close()
 
         self.tx_thread.join()
