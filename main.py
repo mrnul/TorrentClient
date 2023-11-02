@@ -23,5 +23,5 @@ with open("response.json", mode="w") as f:
     json.dump(response, f, indent=2)
 
 for p in response['peers']:
-    peer = Peer(ip=p.get('ip'), port=p.get('port'), torrent=result)
+    peer = Peer(ip=p.get('ip'), port=p.get('port'), torrent_data=result)
     peer.start_communication(b'hello i am testing  ')
