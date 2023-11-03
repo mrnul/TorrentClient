@@ -1,11 +1,11 @@
 from messages.message import Message
 
 
-class HandShake(Message):
+class Handshake(Message):
     def __init__(self, info_hash: bytes, peer_id: bytes,
                  pstr: bytes = b'BitTorrent protocol',
                  reserved: bytes = int(0).to_bytes(8)):
-        super().__init__(None, None)
+        super().__init__(49 + len(pstr), None)
         self.pstr: bytes = pstr
         self.pstrlen: int = len(self.pstr)
         self.reserved: bytes = reserved

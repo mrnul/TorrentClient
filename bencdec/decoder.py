@@ -1,19 +1,20 @@
 from collections import OrderedDict
 
 from . import common
+from .constants import *
 
 
 def _get_element_type_at_index(data: bytes, index: int) -> common.ElementType:
     """
     Returns the type of the element that starts at position <index> in data
     """
-    if data[index] == common.LIST_START:
+    if data[index] == LIST_START:
         return common.ElementType.LIST
-    if data[index] == common.DICT_START:
+    if data[index] == DICT_START:
         return common.ElementType.DICT
-    if data[index] == common.INT_START:
+    if data[index] == INT_START:
         return common.ElementType.INT
-    if data[index] == common.ELEMENT_END:
+    if data[index] == ELEMENT_END:
         return common.ElementType.END
     return common.ElementType.STR
 
@@ -28,7 +29,7 @@ def _decode_str(data: bytes, index: int = 0) -> tuple[str | bytes | None, int]:
 
     :return: (The decoded string | hex values as string, next index to be parsed)
     """
-    num_end = data.find(common.STRING_DELIMITER, index)
+    num_end = data.find(STRING_DELIMITER, index)
     if num_end == -1:
         raise ValueError(f"Could not find string delimiter at {index}")
     try:
@@ -37,10 +38,7 @@ def _decode_str(data: bytes, index: int = 0) -> tuple[str | bytes | None, int]:
         raise ValueError(f"Unexpected non int value for string length at {index}")
     start_index = num_end + 1
     end_index = start_index + length
-    try:
-        result = data[start_index:end_index].decode()
-    except UnicodeDecodeError:
-        result = data[start_index:end_index].hex(' ', 20)
+    result = data[start_index:end_index]
     return result, end_index
 
 
@@ -50,7 +48,7 @@ def _decode_int(data: bytes, index: int = 0) -> tuple[int | None, int]:
 
     :return: (int value, next index to be parsed)
     """
-    num_end = data.find(common.ELEMENT_END, index)
+    num_end = data.find(ELEMENT_END, index)
     if num_end == -1:
         raise ValueError(f"Could not find ending element for number at {index}")
     try:
@@ -76,7 +74,7 @@ def _decode_list(data: bytes, index: int = 0) -> tuple[list, int]:
     return result, i + 1
 
 
-def _decode_dict(data: bytes, index: int = 0) -> tuple[dict, int]:
+def _decode_dict(data: bytes, index: int = 0) -> tuple[OrderedDict, int]:
     """
     Extract dict that starts at <index> in data
 
@@ -123,7 +121,7 @@ def _get_element(data: bytes, index: int) -> tuple[list | dict | int | str | Non
     return value, new_index
 
 
-def decode(data: bytes | str) -> dict | list | str | None:
+def decode(data: bytes | str) -> OrderedDict | list | str | None:
     """
     Decodes bencoded data
     """

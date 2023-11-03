@@ -1,6 +1,6 @@
 import socket
 
-from messages import Message, Terminate, HandShake
+from messages import Message, Terminate, Handshake
 from misc import utils
 
 
@@ -13,9 +13,19 @@ class TorrentClientSocket(socket.socket):
 
     def __init__(self):
         super().__init__(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-        super().settimeout(1.0)
+        self.settimeout(1.0)
+        self.__handshake_received = False
+        self.connected = False
 
-    def recv_n(self, n: int, seconds: int = -1) -> bytes | None:
+    def connect(self, __address):
+        super().connect(__address)
+        self.connected = True
+
+    def close(self):
+        super().close()
+        self.connected = False
+
+    def __recv_n__(self, n: int, seconds: int = -1) -> bytes | None:
         """
         Receive exactly n bytes.
 
@@ -30,62 +40,72 @@ class TorrentClientSocket(socket.socket):
             try:
                 tmp_data = self.recv(n - len(data))
                 if len(tmp_data) <= 0:
+                    self.close()
                     return None
                 count = 0
             except TimeoutError:
                 count += 1
                 if 0 < seconds <= count:
+                    self.close()
                     return None
                 continue
             except OSError:
+                self.close()
                 return None
             data += tmp_data
         return data
 
-    def recv_peer_msg(self) -> Message:
+    def recv_msg(self) -> Message:
         """
-        Gets peer messages and returns Terminate if communication with peer should be closed
+        Gets peer messages and returns Terminate if there is a communication error
         """
-        msg_len = self.recv_n(4)
-        if len(msg_len) == 0:
-            return Terminate(f'Connection closed')
+        if not self.__handshake_received:
+            return self.__recv_handshake__()
+
+        msg_len = self.__recv_n__(4)
+        if msg_len is None:
+            return Terminate(f'Could not receive msg len')
 
         msg_len_int = int.from_bytes(msg_len)
         if msg_len_int < 0:
             return Terminate(f'Received message length: {msg_len_int}')
 
-        uid_payload = self.recv_n(msg_len_int)
+        uid_payload = self.__recv_n__(msg_len_int)
+        if uid_payload is None:
+            return Terminate(f'Could not receive msg id')
         return utils.get_message_from_bytes(msg_len + uid_payload)
 
-    def recv_handshake(self) -> HandShake | Terminate:
+    def __recv_handshake__(self) -> Handshake | Terminate:
         """
         Receives handshake message.
 
         Returns Terminate message if there was a problem with handshake
         """
-        ln = self.recv_n(1)
+        ln = self.__recv_n__(1)
         if ln is None:
             return Terminate(f'Could not receive data')
         pstrlen = int.from_bytes(ln)
         if pstrlen != 19:
             return Terminate(f'pstrlen = {pstrlen}')
-        pstr = self.recv_n(pstrlen)
+        pstr = self.__recv_n__(pstrlen)
         if pstr is None or pstr != b'BitTorrent protocol':
             return Terminate(f'pstr = {pstr}')
-        reserved = self.recv_n(8)
+        reserved = self.__recv_n__(8)
         if reserved is None:
             return Terminate(f'Could not receive reserved bytes')
-        info_hash = self.recv_n(20)
+        info_hash = self.__recv_n__(20)
         if info_hash is None:
             return Terminate(f'Could not receive info_hash')
-        peer_id = self.recv_n(20)
+        peer_id = self.__recv_n__(20)
         if peer_id is None:
             return Terminate(f'Could not receive peer_id')
-        return HandShake(info_hash=info_hash,
+
+        self.__handshake_received = True
+        return Handshake(info_hash=info_hash,
                          peer_id=peer_id,
                          reserved=reserved,
                          pstr=pstr)
 
-    def send_peer_message(self, msg: Message) -> bool:
+    def send_msg(self, msg: Message) -> bool:
         msg_bytes = msg.to_bytes()
         return self.send(msg_bytes) == len(msg_bytes)

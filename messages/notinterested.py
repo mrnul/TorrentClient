@@ -4,7 +4,7 @@ from messages import IDs
 from messages.message import Message
 
 
-class NotInterested(Message):
+class Notinterested(Message):
     def __init__(self):
         super().__init__(1, IDs.not_interested.value)
 

@@ -4,7 +4,7 @@ import logging
 class Logger:
     def __init__(self, name: str, file: str, level: str | int):
         self.logger = logging.getLogger(name)
-        formatter = logging.Formatter('%(asctime)s - %(funcName)s %(levelname)s : %(message)s')
+        formatter = logging.Formatter('%(asctime)s - %(funcName)s - %(levelname)s : %(message)s')
         file_handler = logging.FileHandler(file, mode='w')
         file_handler.setFormatter(formatter)
         stream_handler = logging.StreamHandler()

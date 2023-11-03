@@ -3,7 +3,7 @@ import struct
 from messages.message import Message
 
 
-class KeepAlive(Message):
+class Keepalive(Message):
     def __init__(self):
         super().__init__(0, None)
 
