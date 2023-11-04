@@ -1,13 +1,17 @@
 # TorrentClient
 
-Attemting to make a torrent client in Python
+Attempting to make a torrent client in Python
 
 So far...
 
 1) bencoding / decoding is ok
 
-2) tracker GET requests are ok
+2) Tracker GET requests are ok
 
 3) Connection with peers is established
 
-No file handling, no piece manager etc...
+4) Files are created and written
+
+5) Requests are distributed (in a dummy way) to peers
+
+Still more to be done...

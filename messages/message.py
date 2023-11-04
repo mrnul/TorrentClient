@@ -5,7 +5,9 @@ class Message:
 
     def __str__(self) -> str:
         members = [(attr, getattr(self, attr)) for attr in dir(self)
-                   if not callable(getattr(self, attr)) and not attr.startswith("__")]
+                   if not callable(getattr(self, attr))
+                   and not isinstance(getattr(self, attr), (bytes, bytearray))
+                   and not attr.startswith("__")]
         return f'{type(self).__name__} - {members}'
 
     def to_bytes(self) -> bytes:
