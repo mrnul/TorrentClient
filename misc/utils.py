@@ -7,7 +7,7 @@ import requests
 import bencdec
 from messages import *
 from torrent.constants import *
-from torrent.file_info import FileInfo
+from torrent.torrent_file import TorrentFile
 from piece_info.piece_info import PieceInfo
 
 
@@ -52,21 +52,6 @@ def get_message_from_bytes(data: bytes, byteorder: Literal['little', 'big'] = 'b
                           length=int.from_bytes(data[13:17], byteorder=byteorder))
         case _:
             return Unknown(msg_len, msg_id, data[5:])
-
-
-def create_files(files: list[FileInfo]) -> list[BinaryIO]:
-    opened_files: list[BinaryIO] = []
-    for file in files:
-        try:
-            os.makedirs(os.path.dirname(file.path), exist_ok=True)
-            file_already_created = os.path.exists(file.path)
-            f = open(file.path, "wb")
-            if not file_already_created:
-                f.write(int(0).to_bytes(1) * file.size)
-            opened_files.append(f)
-        except BaseExceptionGroup:
-            break
-    return opened_files
 
 
 def get_peer_data_from_tracker(tracker: str, info_hash: bytes, self_id: bytes, port: int) -> dict:
@@ -128,19 +113,24 @@ def get_trackers(torrent_decoded_data: dict) -> set[str]:
     return trackers
 
 
-def get_torrent_files(torrent_decoded_data: dict) -> list[FileInfo]:
-    files: list[FileInfo] = []
+def get_torrent_files(torrent_decoded_data: dict) -> list[TorrentFile]:
+    files: list[TorrentFile] = []
     root_dir = torrent_decoded_data[INFO][NAME].decode()
     if len(root_dir) == 0:
         root_dir = '.'
     for file in torrent_decoded_data[INFO][FILES]:
-        f = f"{root_dir}/{'/'.join([p.decode() for p in file[PATH]])}"
+        path = f"{root_dir}/{'/'.join([p.decode() for p in file[PATH]])}"
         size = int(file[LENGTH])
-        files.append(FileInfo(f, size))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        file_already_created = os.path.exists(path)
+        f = open(path, "wb")
+        if not file_already_created:
+            f.write(int(0).to_bytes(1) * size)
+        files.append(TorrentFile(f, size))
     return files
 
 
-def get_torrent_total_size(files: list[FileInfo]) -> int:
+def get_torrent_total_size(files: list[TorrentFile]) -> int:
     return sum([file.size for file in files])
 
 
@@ -168,11 +158,11 @@ def set_bit_value(bits: bytearray, bit_num: int, new_value: int):
 
 
 def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, byte_num: int,
-                                           file_list: list[FileInfo]) -> tuple[int, int]:
+                                           file_list: list[TorrentFile]) -> tuple[int, int]:
     offset_byte = 0
     byte_num_in_torrent = piece_index * piece_size + byte_num
     for i, file in enumerate(file_list):
-        if not isinstance(file, FileInfo):
+        if not isinstance(file, TorrentFile):
             continue
         first_file_byte = offset_byte
         last_file_byte = offset_byte + file.size

@@ -14,16 +14,26 @@ class TorrentClientSocket(socket.socket):
     def __init__(self):
         super().__init__(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
         self.settimeout(1.0)
-        self.__handshake_received = False
-        self.connected = False
+        self.__connected = False
 
-    def connect(self, __address):
-        super().connect(__address)
-        self.connected = True
+    @property
+    def connected(self):
+        return self.__connected
+
+    def connect(self, __address) -> bool:
+        try:
+            super().connect(__address)
+            self.__connected = True
+        except socket.error:
+            pass
+        return self.connected
 
     def close(self):
-        super().close()
-        self.connected = False
+        try:
+            super().close()
+        except socket.error:
+            pass
+        self.__connected = False
 
     def __recv_n__(self, n: int, seconds: int = -1) -> bytes | None:
         """
@@ -31,8 +41,6 @@ class TorrentClientSocket(socket.socket):
 
         If None is returned an error occurred or there is a disconnection
         """
-        if n == 0:
-            return b''
 
         data = b''
         count = 0
@@ -49,7 +57,7 @@ class TorrentClientSocket(socket.socket):
                     self.close()
                     return None
                 continue
-            except OSError:
+            except socket.error:
                 self.close()
                 return None
             data += tmp_data
@@ -59,9 +67,6 @@ class TorrentClientSocket(socket.socket):
         """
         Gets peer messages and returns Terminate if there is a communication error
         """
-        if not self.__handshake_received:
-            return self.__recv_handshake__()
-
         msg_len = self.__recv_n__(4)
         if msg_len is None:
             return Terminate(f'Could not receive msg len')
@@ -75,7 +80,7 @@ class TorrentClientSocket(socket.socket):
             return Terminate(f'Could not receive msg id')
         return utils.get_message_from_bytes(msg_len + uid_payload)
 
-    def __recv_handshake__(self) -> Handshake | Terminate:
+    def recv_handshake(self) -> Handshake | Terminate:
         """
         Receives handshake message.
 
@@ -100,7 +105,6 @@ class TorrentClientSocket(socket.socket):
         if peer_id is None:
             return Terminate(f'Could not receive peer_id')
 
-        self.__handshake_received = True
         return Handshake(info_hash=info_hash,
                          peer_id=peer_id,
                          reserved=reserved,
