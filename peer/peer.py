@@ -54,9 +54,6 @@ class Peer(TorrentClientSocket):
             return True
         return False
 
-    def send_interested(self, msg: Interested) -> bool:
-        return self.send_msg(msg)
-
     def send_request(self, data_req: DataRequest) -> bool:
         if self.am_choked:
             self.active_request.sent = False

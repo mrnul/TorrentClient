@@ -1,6 +1,6 @@
 import select
 
-from messages import Interested, Piece, Message, Terminate, Bitfield
+from messages import Piece, Message, Terminate, Bitfield, Interested
 from misc import utils
 from peer import Peer
 from piece_info import PieceInfo
@@ -39,7 +39,7 @@ class Torrent:
         if isinstance(msg, Terminate):
             return False
         if isinstance(msg, Bitfield):
-            peer.send_interested(Interested())
+            peer.send_msg(Interested())
         elif isinstance(msg, Piece):
             for i, byte_value in enumerate(msg.block):
                 f, b = utils.get_file_and_byte_from_byte_in_torrent(msg.index, self.piece_size, i, self.torrent_files)
