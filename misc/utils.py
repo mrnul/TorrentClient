@@ -6,9 +6,10 @@ import requests
 
 import bencdec
 from messages import *
+from messages.ids import IDs
 from piece_info.piece_info import PieceInfo
 from torrent.constants import *
-from torrent.torrent_file import TorrentFile
+from torrent.file import File
 
 
 def get_info_sha1_hash(torrent_data: dict) -> bytes:
@@ -113,8 +114,8 @@ def get_trackers(torrent_decoded_data: dict) -> set[str]:
     return trackers
 
 
-def get_torrent_files(torrent_decoded_data: dict) -> list[TorrentFile]:
-    files: list[TorrentFile] = []
+def get_torrent_files(torrent_decoded_data: dict) -> list[File]:
+    files: list[File] = []
     root_dir = torrent_decoded_data[INFO][NAME].decode()
     if len(root_dir) == 0:
         root_dir = '.'
@@ -126,11 +127,11 @@ def get_torrent_files(torrent_decoded_data: dict) -> list[TorrentFile]:
         f = open(path, "wb")
         if not file_already_created:
             f.write(int(0).to_bytes(1) * size)
-        files.append(TorrentFile(f, size))
+        files.append(File(f, size))
     return files
 
 
-def get_torrent_total_size(files: list[TorrentFile]) -> int:
+def get_torrent_total_size(files: list[File]) -> int:
     return sum([file.size for file in files])
 
 
@@ -158,11 +159,11 @@ def set_bit_value(bits: bytearray, bit_num: int, new_value: int):
 
 
 def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, byte_num: int,
-                                           file_list: list[TorrentFile]) -> tuple[int, int]:
+                                           file_list: list[File]) -> tuple[int, int]:
     offset_byte = 0
     byte_num_in_torrent = piece_index * piece_size + byte_num
     for i, file in enumerate(file_list):
-        if not isinstance(file, TorrentFile):
+        if not isinstance(file, File):
             continue
         first_file_byte = offset_byte
         last_file_byte = offset_byte + file.size

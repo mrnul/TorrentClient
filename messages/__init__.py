@@ -1,4 +1,3 @@
-from .ids import IDs
 from .bitfield import Bitfield
 from .cancel import Cancel
 from .choke import Choke

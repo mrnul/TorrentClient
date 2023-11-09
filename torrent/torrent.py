@@ -4,8 +4,9 @@ from messages import Interested, Piece, Message, Terminate, Bitfield
 from misc import utils
 from peer import Peer
 from piece_info import PieceInfo
-from . import TorrentFile, DataRequest
 from .constants import *
+from .data_request import DataRequest
+from .file import File
 
 
 class Torrent:
@@ -16,7 +17,7 @@ class Torrent:
         self.info_hash: bytes = utils.get_info_sha1_hash(self.torrent_decoded_data)
         self.port: int = port
         self.self_id: bytes = self_id
-        self.torrent_files: list[TorrentFile] = utils.get_torrent_files(self.torrent_decoded_data)
+        self.torrent_files: list[File] = utils.get_torrent_files(self.torrent_decoded_data)
         self.total_size: int = utils.get_torrent_total_size(self.torrent_files)
         self.piece_size = self.torrent_decoded_data[INFO][PIECE_LENGTH]
         self.pieces_info: list[PieceInfo] = utils.parse_torrent_pieces(self.torrent_decoded_data, self.total_size)
@@ -49,11 +50,7 @@ class Torrent:
         return True
 
     def perform_requests(self) -> bool:
-        connected_peers = [peer for peer in self.peers.values() if peer.connected]
-        if len(connected_peers) == 0:
-            return False
-
-        r_ready, _, _ = select.select(connected_peers, [], [], 1.0)
+        r_ready, _, _ = select.select(self.peers.values(), [], [], 1.0)
         for peer in r_ready:
             if not isinstance(peer, Peer):
                 continue
@@ -61,13 +58,12 @@ class Torrent:
                 peer.close()
                 self.peers.pop(peer.peer_id_from_tracker)
 
-        pending_requests = [request for request in self.requests if not request.done and not request.sent]
-        interesting_peers = [peer for peer in connected_peers if peer.am_interested]
+        pending_requests = [request for request in self.requests if not request.done]
         if len(pending_requests) == 0:
             return False
 
         for request in pending_requests:
-            for peer in interesting_peers:
+            for peer in r_ready:
                 if peer.send_request(request):
                     break
         return True

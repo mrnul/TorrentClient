@@ -1,6 +1,6 @@
 import struct
 
-from messages import IDs
+from messages.ids import IDs
 from messages.message import Message
 
 

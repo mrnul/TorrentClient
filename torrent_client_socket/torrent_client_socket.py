@@ -25,7 +25,7 @@ class TorrentClientSocket(socket.socket):
             super().connect(__address)
             self.__connected = True
         except socket.error:
-            pass
+            self.__connected = False
         return self.connected
 
     def close(self):
@@ -35,7 +35,7 @@ class TorrentClientSocket(socket.socket):
             pass
         self.__connected = False
 
-    def __recv_n__(self, n: int, seconds: int = -1) -> bytes | None:
+    def __recv_n__(self, n: int) -> bytes | None:
         """
         Receive exactly n bytes.
 
@@ -43,19 +43,13 @@ class TorrentClientSocket(socket.socket):
         """
 
         data = b''
-        count = 0
         while len(data) != n:
             try:
                 tmp_data = self.recv(n - len(data))
                 if len(tmp_data) <= 0:
                     self.close()
                     return None
-                count = 0
             except TimeoutError:
-                count += 1
-                if 0 < seconds <= count:
-                    self.close()
-                    return None
                 continue
             except socket.error:
                 self.close()
@@ -111,5 +105,9 @@ class TorrentClientSocket(socket.socket):
                          pstr=pstr)
 
     def send_msg(self, msg: Message) -> bool:
-        msg_bytes = msg.to_bytes()
-        return self.send(msg_bytes) == len(msg_bytes)
+        try:
+            msg_bytes = msg.to_bytes()
+            return self.send(msg_bytes) == len(msg_bytes)
+        except socket.error:
+            self.close()
+        return False

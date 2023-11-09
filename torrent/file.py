@@ -1,8 +1,8 @@
 from typing import BinaryIO
 
 
-class TorrentFile:
-    def __init__(self,  f: BinaryIO, size: int):
+class File:
+    def __init__(self, f: BinaryIO, size: int):
         self.__size: int = size
         self.__f: BinaryIO = f
 
