@@ -12,8 +12,6 @@ from torrent_client_socket import TorrentClientSocket
 class Peer(TorrentClientSocket):
     """
     Class that handles connection with a peer.
-
-    RX and TX messages on separate threads using TorrentClientSocket
     """
     __NO_REQUEST__ = DataRequest(-1, -1, -1)
     request_wait = 10.0
@@ -61,6 +59,9 @@ class Peer(TorrentClientSocket):
         if self.am_choked:
             self.active_request.sent = False
             self.active_request = self.__NO_REQUEST__
+            return False
+
+        if not self.has_piece(data_req.index):
             return False
 
         if time.time() - self.active_request.time_sent < self.request_wait:
@@ -144,4 +145,5 @@ class Peer(TorrentClientSocket):
         Closes socket
         """
         self.active_request.sent = False
+        self.active_request = self.__NO_REQUEST__
         super().close()

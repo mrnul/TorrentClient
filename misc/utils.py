@@ -1,14 +1,14 @@
 import hashlib
 import os
-from typing import Literal, OrderedDict, BinaryIO
+from typing import Literal, OrderedDict
 
 import requests
 
 import bencdec
 from messages import *
+from piece_info.piece_info import PieceInfo
 from torrent.constants import *
 from torrent.torrent_file import TorrentFile
-from piece_info.piece_info import PieceInfo
 
 
 def get_info_sha1_hash(torrent_data: dict) -> bytes:

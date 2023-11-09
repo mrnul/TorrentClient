@@ -68,8 +68,6 @@ class Torrent:
 
         for request in pending_requests:
             for peer in interesting_peers:
-                if not peer.has_piece(request.index):
-                    continue
                 if peer.send_request(request):
                     break
         return True
