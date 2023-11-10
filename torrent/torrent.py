@@ -1,9 +1,8 @@
-import select
-
 from messages import Piece, Message, Terminate, Bitfield, Interested
 from misc import utils
 from peer import Peer
 from piece_info import PieceInfo
+from tracker.tracker import Tracker
 from .constants import *
 from .data_request import DataRequest
 from .file import File
@@ -26,20 +25,21 @@ class Torrent:
         self.requests: list[DataRequest] = [DataRequest(p.index, 0, p.length) for p in self.pieces_info]
 
     def refresh_peers(self):
-        peer_data = utils.get_peer_data_from_trackers(self.trackers, self.info_hash, self.self_id, self.port)
-        for peer in peer_data.values():
-            if peer[PEER_ID] in self.peers:
-                continue
-            self.peers[peer[PEER_ID]] = Peer(peer[IP], peer[PORT], peer[PEER_ID],
-                                             self.info_hash, len(self.pieces_info))
+        for tracker in self.trackers:
+            peer_data = Tracker(tracker).request_peers(self.torrent_decoded_data, self.self_id, self.port)
+            for peer in peer_data.values():
+                if peer[PEER_ID] in self.peers:
+                    continue
+                self.peers[peer[PEER_ID]] = Peer(peer[IP], peer[PORT], peer[PEER_ID],
+                                                 self.info_hash, len(self.pieces_info))
 
     def __handle_peer_msg__(self, peer: Peer, msg: Message | None) -> bool:
         if msg is None:
-            return False
+            return True
         if isinstance(msg, Terminate):
             return False
         if isinstance(msg, Bitfield):
-            peer.send_msg(Interested())
+            peer.insert_msg(Interested())
         elif isinstance(msg, Piece):
             for i, byte_value in enumerate(msg.block):
                 f, b = utils.get_file_and_byte_from_byte_in_torrent(msg.index, self.piece_size, i, self.torrent_files)
@@ -49,12 +49,17 @@ class Torrent:
                 file.flush()
         return True
 
-    def perform_requests(self) -> bool:
-        r_ready, _, _ = select.select(self.peers.values(), [], [], 1.0)
-        for peer in r_ready:
+    def download_cycle(self) -> bool:
+        connected_peers = [peer for peer in self.peers.values() if peer.connected]
+
+        for peer in connected_peers:
+            peer.send_data()
+
+        for peer in connected_peers:
             if not isinstance(peer, Peer):
                 continue
-            if not self.__handle_peer_msg__(peer, peer.recv_msg()):
+            peer.receive_data()
+            if not self.__handle_peer_msg__(peer, peer.retrieve_msg()):
                 peer.close()
                 self.peers.pop(peer.peer_id_from_tracker)
 
@@ -63,8 +68,8 @@ class Torrent:
             return False
 
         for request in pending_requests:
-            for peer in r_ready:
-                if peer.send_request(request):
+            for peer in connected_peers:
+                if peer.insert_request(request):
                     break
         return True
 

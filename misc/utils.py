@@ -1,8 +1,6 @@
 import hashlib
 import os
-from typing import Literal, OrderedDict
-
-import requests
+from typing import Literal
 
 import bencdec
 from messages import *
@@ -52,39 +50,7 @@ def get_message_from_bytes(data: bytes, byteorder: Literal['little', 'big'] = 'b
                           begin=int.from_bytes(data[9:13], byteorder=byteorder),
                           length=int.from_bytes(data[13:17], byteorder=byteorder))
         case _:
-            return Unknown(msg_len, msg_id, data[5:])
-
-
-def get_peer_data_from_tracker(tracker: str, info_hash: bytes, self_id: bytes, port: int) -> dict:
-    peer_data = dict()
-    if not tracker.startswith('http'):  # will handle non http(s) some other time
-        return peer_data
-    r = requests.get(tracker, params={
-        'info_hash': info_hash,
-        'peer_id': self_id,
-        'port': port
-    })
-    response = bencdec.decode(r.content)
-    for p in response[PEERS]:
-        if not isinstance(p, OrderedDict):
-            continue
-        peer_id: bytes = p[PEER_ID]
-        if peer_id in peer_data:
-            continue
-
-        peer_data[peer_id] = {
-            IP: p[IP].decode(),
-            PORT: p[PORT],
-            PEER_ID: peer_id
-        }
-    return peer_data
-
-
-def get_peer_data_from_trackers(trackers: set[str], info_hash: bytes, self_id: bytes, port: int) -> dict:
-    peers = dict()
-    for tracker in trackers:
-        peers |= get_peer_data_from_tracker(tracker, info_hash, self_id, port)
-    return peers
+            return Unknown(msg_id, data[5:])
 
 
 def load_torrent_file(file: str) -> dict:
@@ -171,3 +137,76 @@ def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, by
             return i, byte_num_in_torrent - first_file_byte
         offset_byte += file.size
     return -1, -1
+
+
+def bytes_to_msg(data: bytearray) -> Message | None:
+    len_data = len(data)
+    if len_data < 4:
+        return None
+    msg_len = int.from_bytes(data[0:4])
+    if msg_len == 0:
+        return Keepalive()
+
+    if len_data < 5:
+        return None
+    msg_id = int.from_bytes(data[4:5])
+    match msg_id:
+        case IDs.choke.value:
+            return Choke()
+        case IDs.unchoke.value:
+            return Unchoke()
+        case IDs.interested.value:
+            return Interested()
+        case IDs.not_interested.value:
+            return Notinterested()
+        case IDs.have.value:
+            if len_data < 6:
+                return None
+            return Have(piece_index=int.from_bytes(data[5:6]))
+        case IDs.bitfield.value:
+            upper = 5 + msg_len - 1
+            if len_data < upper:
+                return None
+            return Bitfield(bitfield=data[5:upper])
+        case IDs.request.value:
+            if len_data < 17:
+                return None
+            return Request(index=int.from_bytes(data[5:9]),
+                           begin=int.from_bytes(data[9:13]),
+                           length=int.from_bytes(data[13:17]))
+        case IDs.piece.value:
+            upper = 13 + msg_len - 9
+            if len_data < upper:
+                return None
+            return Piece(index=int.from_bytes(data[5:9]),
+                         begin=int.from_bytes(data[9:13]),
+                         block=data[13:upper])
+        case IDs.cancel.value:
+            if len_data < 17:
+                return None
+            return Cancel(index=int.from_bytes(data[5:9]),
+                          begin=int.from_bytes(data[9:13]),
+                          length=int.from_bytes(data[13:17]))
+        case _:
+            upper = 5 + msg_len - 1
+            if len_data < upper:
+                return None
+            return Unknown(msg_id, data[5:upper])
+
+
+def bytes_to_handshake(data: bytearray) -> Handshake | Terminate | None:
+    if len(data) < 68:
+        return None
+    pstrlen = int.from_bytes(data[0:1])
+    if pstrlen != 19:
+        return Terminate(f'Handshake pstrlen is {pstrlen} but expected 19')
+    pstr = data[1:20]
+    if pstr != b'BitTorrent protocol':
+        return Terminate(f'Handshake protocol is {pstr} but expected "BitTorrent protocol"')
+    reserved = data[21:29]
+    info_hash = data[29:49]
+    peer_id = data[49:69]
+    return Handshake(info_hash=info_hash,
+                     peer_id=peer_id,
+                     reserved=reserved,
+                     pstr=pstr)

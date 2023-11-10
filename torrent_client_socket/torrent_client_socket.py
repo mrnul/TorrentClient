@@ -1,113 +1,114 @@
 import socket
 
-from messages import Message, Terminate, Handshake
+import logging
+import select
+
+from messages import Message, Handshake, Terminate
 from misc import utils
 
 
-class TorrentClientSocket(socket.socket):
+class TorrentClientSocket:
     """
     Wrapper class for a TCP client socket that receives / sends peer protocol messages.
-
-    Socket is created with timeout = 1.0
     """
 
-    def __init__(self):
-        super().__init__(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
-        self.settimeout(1.0)
+    __RECV_SIZE__ = 2 ** 14
+    logging.basicConfig(filename='TorrentClientSockets.log', filemode='w', level=logging.DEBUG)
+
+    def __init__(self, ip: str, port: int):
+        self.ip: str = ip
+        self.port: int = port
+        self.s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
+        self.s.setblocking(False)
         self.__connected = False
+        self.__rx_array: bytearray = bytearray()
+        self.__tx_array: bytearray = bytearray()
+        logging.info('Peer %s:%s initialized', self.ip, self.port)
 
     @property
-    def connected(self):
+    def connected(self) -> bool:
+        try:
+            _, w_list, _ = select.select([], [self.s], [], 0.0)
+            self.__connected = len(w_list) != 0
+        except ValueError:
+            self.__connected = False
         return self.__connected
 
-    def connect(self, __address) -> bool:
+    def should_read(self) -> bool:
         try:
-            super().connect(__address)
-            self.__connected = True
+            r_list, _, _ = select.select([self.s], [], [], 0.0)
+            return len(r_list) != 0
+        except ValueError:
+            pass
+        return False
+
+    def connect(self) -> bool:
+        try:
+            self.s.connect_ex((self.ip, self.port))
         except socket.error:
-            self.__connected = False
-        return self.connected
+            logging.info('Peer %s:%s connection error', self.ip, self.port)
+            return False
+        logging.info('Peer %s:%s connected', self.ip, self.port)
+        return True
 
     def close(self):
         try:
-            super().close()
+            self.s.close()
         except socket.error:
             pass
+        logging.info('Peer %s:%s closed', self.ip, self.port)
         self.__connected = False
 
-    def __recv_n__(self, n: int) -> bytes | None:
-        """
-        Receive exactly n bytes.
+    def receive_data(self) -> int | None:
+        if not self.should_read():
+            return 0
 
-        If None is returned an error occurred or there is a disconnection
-        """
-
-        data = b''
-        while len(data) != n:
-            try:
-                tmp_data = self.recv(n - len(data))
-                if len(tmp_data) <= 0:
-                    self.close()
-                    return None
-            except TimeoutError:
-                continue
-            except socket.error:
+        try:
+            data = bytearray(self.s.recv(self.__RECV_SIZE__))
+            if not data:
                 self.close()
                 return None
-            data += tmp_data
-        return data
-
-    def recv_msg(self) -> Message:
-        """
-        Gets peer messages and returns Terminate if there is a communication error
-        """
-        msg_len = self.__recv_n__(4)
-        if msg_len is None:
-            return Terminate(f'Could not receive msg len')
-
-        msg_len_int = int.from_bytes(msg_len)
-        if msg_len_int < 0:
-            return Terminate(f'Received message length: {msg_len_int}')
-
-        uid_payload = self.__recv_n__(msg_len_int)
-        if uid_payload is None:
-            return Terminate(f'Could not receive msg id')
-        return utils.get_message_from_bytes(msg_len + uid_payload)
-
-    def recv_handshake(self) -> Handshake | Terminate:
-        """
-        Receives handshake message.
-
-        Returns Terminate message if there was a problem with handshake
-        """
-        ln = self.__recv_n__(1)
-        if ln is None:
-            return Terminate(f'Could not receive data')
-        pstrlen = int.from_bytes(ln)
-        if pstrlen != 19:
-            return Terminate(f'pstrlen = {pstrlen}')
-        pstr = self.__recv_n__(pstrlen)
-        if pstr is None or pstr != b'BitTorrent protocol':
-            return Terminate(f'pstr = {pstr}')
-        reserved = self.__recv_n__(8)
-        if reserved is None:
-            return Terminate(f'Could not receive reserved bytes')
-        info_hash = self.__recv_n__(20)
-        if info_hash is None:
-            return Terminate(f'Could not receive info_hash')
-        peer_id = self.__recv_n__(20)
-        if peer_id is None:
-            return Terminate(f'Could not receive peer_id')
-
-        return Handshake(info_hash=info_hash,
-                         peer_id=peer_id,
-                         reserved=reserved,
-                         pstr=pstr)
-
-    def send_msg(self, msg: Message) -> bool:
-        try:
-            msg_bytes = msg.to_bytes()
-            return self.send(msg_bytes) == len(msg_bytes)
         except socket.error:
-            self.close()
-        return False
+            data = bytearray()
+        self.__rx_array += data
+        return len(data)
+
+    def insert_tx_data(self, data: bytes) -> int:
+        self.__tx_array += bytearray(data)
+        return len(self.__tx_array)
+
+    def insert_msg(self, msg: Message) -> int:
+        logging.info('Peer %s:%s inserting msg %s', self.ip, self.port, msg)
+        return self.insert_tx_data(msg.to_bytes())
+
+    def consume_rx_data(self) -> Message | None:
+        if len(self.__rx_array) == 0:
+            return None
+        msg = utils.bytes_to_msg(self.__rx_array)
+        if msg is not None:
+            self.__rx_array = self.__rx_array[msg.len + 4:]
+            logging.info('Peer %s:%s consume %s', self.ip, self.port, msg)
+        return msg
+
+    def consume_handshake(self) -> Handshake | Terminate | None:
+        msg = utils.bytes_to_handshake(self.__rx_array)
+        if msg is not None:
+            self.__rx_array = self.__rx_array[msg.len:]
+            logging.info('Peer %s:%s consume %s', self.ip, self.port, msg)
+        return msg
+
+    def send_data(self) -> int:
+        if len(self.__tx_array) == 0:
+            return 0
+        try:
+            bytes_sent = self.s.send(self.__tx_array)
+            self.__tx_array = self.__tx_array[bytes_sent:]
+            return bytes_sent
+        except socket.error:
+            return 0
+
+    def tx_size(self) -> int:
+        return len(self.__tx_array)
+
+    def rx_size(self) -> int:
+        return len(self.__rx_array)
