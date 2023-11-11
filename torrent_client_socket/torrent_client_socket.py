@@ -1,6 +1,6 @@
+import logging
 import socket
 
-import logging
 import select
 
 from messages import Message, Handshake, Terminate

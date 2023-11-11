@@ -1,6 +1,5 @@
 import hashlib
 import os
-from typing import Literal
 
 import bencdec
 from messages import *
@@ -10,47 +9,12 @@ from torrent.constants import *
 from torrent.file import File
 
 
-def get_info_sha1_hash(torrent_data: dict) -> bytes:
+def get_info_sha1_hash(decoded_torrent_data: dict) -> bytes:
     """
-    Takes info dictionary as input and returns the sha1 hash bytes
+    Takes torrent dictionary as input and returns the sha1 hash bytes
     """
-    info_encoded_data = bencdec.encode(torrent_data[INFO])
+    info_encoded_data = bencdec.encode(decoded_torrent_data[INFO])
     return hashlib.sha1(info_encoded_data).digest()
-
-
-def get_message_from_bytes(data: bytes, byteorder: Literal['little', 'big'] = 'big') -> Message:
-    msg_len = int.from_bytes(data[0: 4])
-    if msg_len == 0:
-        return Keepalive()
-
-    msg_id = int.from_bytes(data[4:5])
-    match msg_id:
-        case IDs.choke.value:
-            return Choke()
-        case IDs.unchoke.value:
-            return Unchoke()
-        case IDs.interested.value:
-            return Interested()
-        case IDs.not_interested.value:
-            return Notinterested()
-        case IDs.have.value:
-            return Have(piece_index=int.from_bytes(data[5:5], byteorder=byteorder))
-        case IDs.bitfield.value:
-            return Bitfield(bitfield=data[5:])
-        case IDs.request.value:
-            return Request(index=int.from_bytes(data[5:9], byteorder=byteorder),
-                           begin=int.from_bytes(data[9:13], byteorder=byteorder),
-                           length=int.from_bytes(data[13:17], byteorder=byteorder))
-        case IDs.piece.value:
-            return Piece(index=int.from_bytes(data[5:9], byteorder=byteorder),
-                         begin=int.from_bytes(data[9:13], byteorder=byteorder),
-                         block=data[13:])
-        case IDs.cancel.value:
-            return Cancel(index=int.from_bytes(data[5:9], byteorder=byteorder),
-                          begin=int.from_bytes(data[9:13], byteorder=byteorder),
-                          length=int.from_bytes(data[13:17], byteorder=byteorder))
-        case _:
-            return Unknown(msg_id, data[5:])
 
 
 def load_torrent_file(file: str) -> dict:
@@ -93,6 +57,7 @@ def get_torrent_files(torrent_decoded_data: dict) -> list[File]:
         f = open(path, "wb")
         if not file_already_created:
             f.write(int(0).to_bytes(1) * size)
+            f.flush()
         files.append(File(f, size))
     return files
 
@@ -125,7 +90,7 @@ def set_bit_value(bits: bytearray, bit_num: int, new_value: int):
 
 
 def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, byte_num: int,
-                                           file_list: list[File]) -> tuple[int, int]:
+                                           file_list: list[File]) -> tuple[File, int] | None:
     offset_byte = 0
     byte_num_in_torrent = piece_index * piece_size + byte_num
     for i, file in enumerate(file_list):
@@ -134,9 +99,9 @@ def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, by
         first_file_byte = offset_byte
         last_file_byte = offset_byte + file.size
         if byte_num_in_torrent in range(first_file_byte, last_file_byte):
-            return i, byte_num_in_torrent - first_file_byte
+            return file, byte_num_in_torrent - first_file_byte
         offset_byte += file.size
-    return -1, -1
+    return None
 
 
 def bytes_to_msg(data: bytearray) -> Message | None:

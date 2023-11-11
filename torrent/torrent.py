@@ -1,37 +1,57 @@
+import queue
+import threading
+
 from messages import Piece, Message, Terminate, Bitfield, Interested
 from misc import utils
 from peer import Peer
-from piece_info import PieceInfo
+from peer.peer_info import PeerInfo
 from tracker.tracker import Tracker
-from .constants import *
 from .data_request import DataRequest
-from .file import File
+from .torrent_info import TorrentInfo
 
 
 class Torrent:
-    def __init__(self, torrent_file: str, port: int, self_id: bytes):
-        self.torrent_file: str = torrent_file
-        self.torrent_decoded_data = utils.load_torrent_file(self.torrent_file)
-        self.trackers: set[str] = utils.get_trackers(self.torrent_decoded_data)
-        self.info_hash: bytes = utils.get_info_sha1_hash(self.torrent_decoded_data)
-        self.port: int = port
-        self.self_id: bytes = self_id
-        self.torrent_files: list[File] = utils.get_torrent_files(self.torrent_decoded_data)
-        self.total_size: int = utils.get_torrent_total_size(self.torrent_files)
-        self.piece_size = self.torrent_decoded_data[INFO][PIECE_LENGTH]
-        self.pieces_info: list[PieceInfo] = utils.parse_torrent_pieces(self.torrent_decoded_data, self.total_size)
-        self.peers: dict = dict()
+    def __init__(self, torrent_info: TorrentInfo):
+        def worker():
+            while True:
+                piece: Piece | None = self.worker_queue.get()
+                if piece is None:
+                    break
+                print(f'Writing {piece} - ', end='')
+                f1, b1 = utils.get_file_and_byte_from_byte_in_torrent(piece.index, self.torrent_info.piece_size,
+                                                                      0,
+                                                                      self.torrent_info.torrent_files)
 
-        self.requests: list[DataRequest] = [DataRequest(p.index, 0, p.length) for p in self.pieces_info]
+                f2, b2 = utils.get_file_and_byte_from_byte_in_torrent(piece.index, self.torrent_info.piece_size,
+                                                                      len(piece.block) - 1,
+                                                                      self.torrent_info.torrent_files)
+                if f1 == f2:
+                    print('Fast', end='')
+                    f1.file.seek(b1)
+                    f1.file.write(piece.block)
+                else:
+                    print('Slow...', end='')
+                    for i, byte_value in enumerate(piece.block):
+                        f, b = utils.get_file_and_byte_from_byte_in_torrent(piece.index, self.torrent_info.piece_size,
+                                                                            i,
+                                                                            self.torrent_info.torrent_files)
+                        f.file.seek(b)
+                        f.file.write(int(byte_value).to_bytes(1))
+                print(' - Done!')
+
+        self.torrent_info = torrent_info
+        self.requests: list[DataRequest] = [DataRequest(p.index, 0, p.length) for p in self.torrent_info.pieces_info]
+        self.worker_queue = queue.Queue()
+        self.thread = threading.Thread(target=worker)
+        self.thread.start()
 
     def refresh_peers(self):
-        for tracker in self.trackers:
-            peer_data = Tracker(tracker).request_peers(self.torrent_decoded_data, self.self_id, self.port)
-            for peer in peer_data.values():
-                if peer[PEER_ID] in self.peers:
-                    continue
-                self.peers[peer[PEER_ID]] = Peer(peer[IP], peer[PORT], peer[PEER_ID],
-                                                 self.info_hash, len(self.pieces_info))
+        peer_info: set[PeerInfo] = set()
+        for tracker in self.torrent_info.trackers:
+            peer_info |= Tracker(tracker).request_peers(self.torrent_info)
+
+        for p_i in peer_info:
+            self.torrent_info.peers.add(Peer(p_i, self.torrent_info.info_hash, len(self.torrent_info.pieces_info)))
 
     def __handle_peer_msg__(self, peer: Peer, msg: Message | None) -> bool:
         if msg is None:
@@ -41,16 +61,11 @@ class Torrent:
         if isinstance(msg, Bitfield):
             peer.insert_msg(Interested())
         elif isinstance(msg, Piece):
-            for i, byte_value in enumerate(msg.block):
-                f, b = utils.get_file_and_byte_from_byte_in_torrent(msg.index, self.piece_size, i, self.torrent_files)
-                file = self.torrent_files[f].file
-                file.seek(b)
-                file.write(int(byte_value).to_bytes(1))
-                file.flush()
+            self.worker_queue.put(msg)
         return True
 
     def download_cycle(self) -> bool:
-        connected_peers = [peer for peer in self.peers.values() if peer.connected]
+        connected_peers = [peer for peer in self.torrent_info.peers if peer.connected]
 
         for peer in connected_peers:
             peer.send_data()
@@ -61,10 +76,11 @@ class Torrent:
             peer.receive_data()
             if not self.__handle_peer_msg__(peer, peer.retrieve_msg()):
                 peer.close()
-                self.peers.pop(peer.peer_id_from_tracker)
 
         pending_requests = [request for request in self.requests if not request.done]
         if len(pending_requests) == 0:
+            self.worker_queue.put(None)
+            self.thread.join()
             return False
 
         for request in pending_requests:
@@ -74,7 +90,7 @@ class Torrent:
         return True
 
     def connect_to_peers(self):
-        for peer in self.peers.values():
+        for peer in self.torrent_info.peers:
             if peer.connected:
                 continue
-            peer.connect_and_handshake(self.self_id)
+            peer.connect_and_handshake(self.torrent_info.self_id)

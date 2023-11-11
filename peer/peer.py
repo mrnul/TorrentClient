@@ -4,6 +4,7 @@ import time
 from messages import Message, Handshake, Interested, Notinterested, Bitfield, Have, \
     Terminate, Request, Unchoke, Choke, Piece, Cancel
 from misc import utils
+from peer.peer_info import PeerInfo
 from torrent.data_request import DataRequest
 from torrent_client_socket.torrent_client_socket import TorrentClientSocket
 
@@ -15,10 +16,9 @@ class Peer(TorrentClientSocket):
     __NO_REQUEST__ = DataRequest(-1, -1, -1)
     request_timeout = 10.0
 
-    def __init__(self, ip: str, port: int,
-                 peer_id: bytes, info_hash: bytes, piece_count: int):
-        super().__init__(ip, port)
-        self.peer_id_str: str = peer_id.decode(encoding='ascii', errors='ignore')
+    def __init__(self, peer_info: PeerInfo, info_hash: bytes, piece_count: int):
+        super().__init__(peer_info.ip, peer_info.port)
+        self.peer_id_str: str = peer_info.peer_id_tracker.decode(encoding='ascii', errors='ignore')
 
         self.am_choked: bool = True
         self.am_choking: bool = False
@@ -27,14 +27,20 @@ class Peer(TorrentClientSocket):
         self.handshake_received: bool = False
         self.active_request: DataRequest = self.__NO_REQUEST__
 
-        self.ip: str = ip
-        self.port: int = port
-        self.peer_id_from_tracker: bytes = peer_id
-        self.peer_id_from_handshake: bytes = bytes()
+        self.peer_info = peer_info
         self.info_hash = info_hash
         self.piece_count = piece_count
+        self.peer_id_handshake: bytes = bytes()
 
         self.bitfield: bytearray = bytearray(math.ceil(self.piece_count / 8))
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, Peer):
+            return False
+        return self.peer_info == other.peer_info
+
+    def __hash__(self) -> int:
+        return hash(self.peer_info)
 
     def insert_msg(self, msg: Message):
         """
@@ -82,6 +88,8 @@ class Peer(TorrentClientSocket):
         self.handshake_received = isinstance(msg, Handshake)
         if not self.handshake_received:
             return Terminate(f'Could not receive handshake from {self.peer_id_str}')
+        else:
+            self.peer_id_handshake = msg.peer_id
         return msg
 
     def __handle_recv_piece__(self, msg: Piece):

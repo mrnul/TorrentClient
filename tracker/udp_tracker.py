@@ -4,19 +4,20 @@ import struct
 import urllib.parse
 
 from misc import utils
-from torrent.constants import IP, PORT, PEER_ID
+from peer.peer_info import PeerInfo
+from torrent.torrent_info import TorrentInfo
 from tracker.tracker_base import TrackerBase
 
 
 class UDPTracker(TrackerBase):
     __UDP_MAX_PACKET_SIZE__ = 65535
 
-    def request_peers(self, torrent_decoded_data: dict, self_id: bytes, port: int) -> dict | None:
-        peer_data = {}
+    def request_peers(self, torrent_info: TorrentInfo) -> set[PeerInfo]:
+        peer_data = set()
         transaction_id = int.from_bytes(random.randbytes(4))
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(1.0)
-        s.bind(('', port))
+        s.bind(('', torrent_info.port))
         msg = struct.pack(">QII", 0x41727101980, 0, transaction_id)
 
         parsed_url = urllib.parse.urlparse(self.tracker)
@@ -26,7 +27,7 @@ class UDPTracker(TrackerBase):
             return peer_data
 
         if len(msg) != bytes_sent:
-            return None
+            return peer_data
 
         try:
             rxed_data = s.recvfrom(self.__UDP_MAX_PACKET_SIZE__)[0]
@@ -39,9 +40,9 @@ class UDPTracker(TrackerBase):
 
         key = int.from_bytes(random.randbytes(2))
         msg = struct.pack('>QII', conn_id, 1, transaction_id)
-        msg += utils.get_info_sha1_hash(torrent_decoded_data)
-        msg += self_id
-        msg += struct.pack('>QQQIIIiHH', 0, 0, 0, 0, 0, key, -1, port, 2)
+        msg += utils.get_info_sha1_hash(torrent_info.torrent_decoded_data)
+        msg += torrent_info.self_id
+        msg += struct.pack('>QQQIIIiHH', 0, 0, 0, 0, 0, key, -1, torrent_info.port, 2)
         msg += struct.pack('>B', len(parsed_url.path))
         msg += parsed_url.path.encode()
         try:
@@ -50,7 +51,7 @@ class UDPTracker(TrackerBase):
             return peer_data
 
         if len(msg) != bytes_sent:
-            return None
+            return peer_data
 
         try:
             rxed_data = s.recvfrom(self.__UDP_MAX_PACKET_SIZE__)[0]
@@ -63,11 +64,6 @@ class UDPTracker(TrackerBase):
         for offset in range(20, data_len, 6):
             ip, port = struct.unpack_from('>IH', rxed_data, offset)
             ip_str = '.'.join(str(byte) for byte in int(ip).to_bytes(4))
-            peer_id = f'{ip_str}:{port}'
-            peer_data[peer_id] = {
-                IP: ip_str,
-                PORT: port,
-                PEER_ID: peer_id.encode()
-            }
+            peer_data.add(PeerInfo(ip_str, port))
 
         return peer_data
