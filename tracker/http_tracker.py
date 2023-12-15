@@ -22,6 +22,8 @@ class HttpTracker(TrackerBase):
             }, timeout=1.0)
         except Timeout:
             return peer_data
+        except (requests.exceptions.SSLError, requests.exceptions.ConnectionError):
+            return set()
         response = bencdec.decode(r.content)
         for p in response[PEERS]:
             if not isinstance(p, OrderedDict):

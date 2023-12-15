@@ -104,17 +104,7 @@ def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, by
     return None
 
 
-def bytes_to_msg(data: bytearray) -> Message | None:
-    len_data = len(data)
-    if len_data < 4:
-        return None
-    msg_len = int.from_bytes(data[0:4])
-    if msg_len == 0:
-        return Keepalive()
-
-    if len_data < 5:
-        return None
-    msg_id = int.from_bytes(data[4:5])
+def bytes_to_msg(msg_id: int, data: bytes) -> Message:
     match msg_id:
         case IDs.choke.value:
             return Choke()
@@ -125,38 +115,23 @@ def bytes_to_msg(data: bytearray) -> Message | None:
         case IDs.not_interested.value:
             return Notinterested()
         case IDs.have.value:
-            if len_data < 6:
-                return None
-            return Have(piece_index=int.from_bytes(data[5:6]))
+            return Have(piece_index=int.from_bytes(data))
         case IDs.bitfield.value:
-            upper = 5 + msg_len - 1
-            if len_data < upper:
-                return None
-            return Bitfield(bitfield=data[5:upper])
+            return Bitfield(bitfield=data)
         case IDs.request.value:
-            if len_data < 17:
-                return None
-            return Request(index=int.from_bytes(data[5:9]),
-                           begin=int.from_bytes(data[9:13]),
-                           length=int.from_bytes(data[13:17]))
+            return Request(index=int.from_bytes(data[0:4]),
+                           begin=int.from_bytes(data[4:8]),
+                           length=int.from_bytes(data[8:12]))
         case IDs.piece.value:
-            upper = 13 + msg_len - 9
-            if len_data < upper:
-                return None
-            return Piece(index=int.from_bytes(data[5:9]),
-                         begin=int.from_bytes(data[9:13]),
-                         block=data[13:upper])
+            return Piece(index=int.from_bytes(data[0:4]),
+                         begin=int.from_bytes(data[4:8]),
+                         block=data[8:])
         case IDs.cancel.value:
-            if len_data < 17:
-                return None
-            return Cancel(index=int.from_bytes(data[5:9]),
-                          begin=int.from_bytes(data[9:13]),
-                          length=int.from_bytes(data[13:17]))
+            return Cancel(index=int.from_bytes(data[0:4]),
+                          begin=int.from_bytes(data[4:8]),
+                          length=int.from_bytes(data[8:13]))
         case _:
-            upper = 5 + msg_len - 1
-            if len_data < upper:
-                return None
-            return Unknown(msg_id, data[5:upper])
+            return Unknown(msg_id, data)
 
 
 def bytes_to_handshake(data: bytearray) -> Handshake | Terminate | None:
