@@ -4,7 +4,7 @@ import os
 import bencdec
 from messages import *
 from messages.ids import IDs
-from piece_info.piece_info import PieceInfo
+from piece_handler.piece_info import PieceInfo
 from torrent.constants import *
 from torrent.file import File
 
