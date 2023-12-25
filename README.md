@@ -1,6 +1,6 @@
 # TorrentClient
 
-Attempting to make a torrent client in Python
+Attempting to make a torrent client in Python using asyncio
 
 So far...
 
