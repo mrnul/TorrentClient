@@ -4,7 +4,7 @@ import struct
 import urllib.parse
 
 from misc import utils
-from peer.peer_info import PeerInfo
+from peer import PeerInfo
 from torrent.torrent_info import TorrentInfo
 from tracker.tracker_base import TrackerBase
 

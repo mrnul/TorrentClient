@@ -1,6 +1,6 @@
 import struct
 
-from messages.message import Message
+from messages import Message
 
 
 class Unknown(Message):

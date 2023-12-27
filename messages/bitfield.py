@@ -1,7 +1,7 @@
 import struct
 
+from messages import Message
 from messages.ids import IDs
-from messages.message import Message
 
 
 class Bitfield(Message):

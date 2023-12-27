@@ -1,3 +1,4 @@
+from .message import Message
 from .bitfield import Bitfield
 from .cancel import Cancel
 from .choke import Choke
@@ -5,8 +6,6 @@ from .handshake import Handshake
 from .have import Have
 from .interested import Interested
 from .keepalive import Keepalive
-from .message import Message
-from .message import Message
 from .notinterested import Notinterested
 from .piece import Piece
 from .request import Request

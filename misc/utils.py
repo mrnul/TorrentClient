@@ -2,11 +2,17 @@ import hashlib
 import os
 
 import bencdec
-from messages import *
+from messages import Message, Choke, Unchoke, Interested, Notinterested, Have, Bitfield, Request, Piece, Cancel, \
+    Unknown, Handshake, Terminate
 from messages.ids import IDs
-from piece_handler.piece_info import PieceInfo
+from piece_handling.piece_info import PieceInfo
 from torrent.constants import *
 from torrent.file import File
+from torrent.torrent_info import TorrentInfo
+
+
+def calculate_hash(data: bytes) -> bytes:
+    return hashlib.sha1(data).digest()
 
 
 def get_info_sha1_hash(decoded_torrent_data: dict) -> bytes:
@@ -14,7 +20,7 @@ def get_info_sha1_hash(decoded_torrent_data: dict) -> bytes:
     Takes torrent dictionary as input and returns the sha1 hash bytes
     """
     info_encoded_data = bencdec.encode(decoded_torrent_data[INFO])
-    return hashlib.sha1(info_encoded_data).digest()
+    return calculate_hash(info_encoded_data)
 
 
 def load_torrent_file(file: str) -> dict:
@@ -22,7 +28,7 @@ def load_torrent_file(file: str) -> dict:
         return bencdec.decode(f.read())
 
 
-def parse_torrent_pieces(torrent_decoded_data: dict, total_size: int) -> list[PieceInfo]:
+def load_torrent_pieces(torrent_decoded_data: dict, total_size: int) -> tuple[PieceInfo, ...]:
     remaining_size: int = total_size
     piece_info_list: list[PieceInfo] = []
     piece_length: int = torrent_decoded_data[INFO][PIECE_LENGTH]
@@ -32,7 +38,7 @@ def parse_torrent_pieces(torrent_decoded_data: dict, total_size: int) -> list[Pi
                       min(piece_length, remaining_size))
         )
         remaining_size -= piece_length
-    return piece_info_list
+    return tuple(piece_info_list)
 
 
 def get_trackers(torrent_decoded_data: dict) -> set[str]:
@@ -44,7 +50,7 @@ def get_trackers(torrent_decoded_data: dict) -> set[str]:
     return trackers
 
 
-def get_torrent_files(torrent_decoded_data: dict) -> list[File]:
+def ensure_and_get_torrent_files(torrent_decoded_data: dict) -> tuple[File, ...]:
     files: list[File] = []
     root_dir = torrent_decoded_data[INFO][NAME].decode()
     if len(root_dir) == 0:
@@ -53,16 +59,41 @@ def get_torrent_files(torrent_decoded_data: dict) -> list[File]:
         path = f"{root_dir}/{'/'.join([p.decode() for p in file[PATH]])}"
         size = int(file[LENGTH])
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        file_already_created = os.path.exists(path)
-        f = open(path, "wb")
-        if not file_already_created:
-            f.write(int(0).to_bytes(1) * size)
+        if not os.path.exists(path):
+            open(path, 'x').close()
+        f = open(path, "rb+")
+        if os.path.getsize(path) != size:
+            f.truncate(size)
             f.flush()
+        f.seek(0)
         files.append(File(f, size))
-    return files
+    return tuple(files)
 
 
-def get_torrent_total_size(files: list[File]) -> int:
+def get_completed_pieces(torrent_info: TorrentInfo) -> list[int]:
+    result = []
+    try:
+        file_index = 0
+        for piece_info in torrent_info.pieces_info:
+            bytes_left = piece_info.length
+            data = b''
+            while bytes_left:
+                tmp_data = torrent_info.torrent_files[file_index].file.read(bytes_left)
+                data += tmp_data
+                bytes_read = len(tmp_data)
+                if bytes_read != bytes_left:
+                    file_index += 1
+                bytes_left -= bytes_read
+            if calculate_hash(data) == piece_info.hash_value:
+                result.append(piece_info.index)
+    except (Exception,):
+        pass
+    for file in torrent_info.torrent_files:
+        file.file.seek(0)
+    return result
+
+
+def get_torrent_total_size(files: tuple[File, ...]) -> int:
     return sum([file.size for file in files])
 
 
@@ -90,7 +121,7 @@ def set_bit_value(bits: bytearray, bit_num: int, new_value: int):
 
 
 def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, byte_num: int,
-                                           file_list: list[File]) -> tuple[File, int] | None:
+                                           file_list: tuple[File, ...]) -> tuple[File, int] | None:
     offset_byte = 0
     byte_num_in_torrent = piece_index * piece_size + byte_num
     for i, file in enumerate(file_list):
