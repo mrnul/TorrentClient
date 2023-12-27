@@ -14,4 +14,8 @@ So far...
 
 5) Requests are distributed (in a dummy way) to peers
 
+6) Showing progress and number of connected peers
+
+7) Torrents can be resumed
+
 Still more to be done...
