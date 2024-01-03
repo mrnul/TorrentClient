@@ -151,6 +151,8 @@ class Peer:
             try:
                 async with asyncio.timeout(self.timeouts.Q):
                     request, active_piece = await self._grab_request_and_active_piece_object()
+                    if not request or not active_piece:
+                        return
             except TimeoutError:
                 await self._send_keep_alive_if_necessary()
             else:

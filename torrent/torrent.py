@@ -2,7 +2,6 @@ import asyncio
 import time
 from asyncio import Task
 
-from messages import Piece
 from misc import utils
 from peer import Peer, PeerInfo
 from piece_handling.active_piece import ActivePiece
@@ -15,26 +14,10 @@ class Torrent:
     __REFRESH_TIMEOUT__ = 60.0
     __PROGRESS_TIMEOUT__ = 10.0
 
-    def write_piece_to_disk(self, piece: Piece):
-        f1, b1 = utils.get_file_and_byte_from_byte_in_torrent(piece.index, self.torrent_info.piece_size, 0,
-                                                              self.torrent_info.torrent_files)
-
-        f2, b2 = utils.get_file_and_byte_from_byte_in_torrent(piece.index, self.torrent_info.piece_size,
-                                                              len(piece.block) - 1,
-                                                              self.torrent_info.torrent_files)
-        if f1 == f2:
-            f1.file.seek(b1)
-            f1.file.write(piece.block)
-        else:
-            for i, byte_value in enumerate(piece.block):
-                f, b = utils.get_file_and_byte_from_byte_in_torrent(piece.index, self.torrent_info.piece_size, i,
-                                                                    self.torrent_info.torrent_files)
-                f.file.seek(b)
-                f.file.write(int(byte_value).to_bytes(1))
-
     def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
         self.peers: set[Peer] = set()
+        self.peer_tasks: list[Task] = []
         self.active_pieces: tuple[ActivePiece, ...] = tuple(ActivePiece(i) for i in range(self.__MAX_ACTIVE_PIECES__))
         self.total_pieces: int = len(self.torrent_info.pieces_info)
         self.completed_pieces: list[int] = utils.get_completed_pieces(self.torrent_info)
@@ -72,13 +55,12 @@ class Torrent:
         for active_piece in self.active_pieces:
             self._update_active_piece(active_piece)
 
-    def _cleanup_tasks(self, tasks: list[Task]):
-        done_tasks = [task for task in tasks if task.done()]
+    def _cleanup_tasks(self):
+        done_tasks = [task for task in self.peer_tasks if task.done()]
         for done_task in done_tasks:
-            tasks.remove(done_task)
+            self.peer_tasks.remove(done_task)
 
     async def download(self):
-        peer_tasks: list[Task] = []
         print(f'Loaded: {len(self.completed_pieces)} / {self.total_pieces}')
         # initialize ActivePiece structures
         self._initialize_active_pieces()
@@ -93,8 +75,8 @@ class Torrent:
                 self.refresh_time = time.time()
                 new_peers = self.refresh_peers()
                 print(f'{len(new_peers)} new peers found!')
-                peer_tasks += [asyncio.create_task(peer.run(), name=f'Peer {peer.peer_info.ip}')
-                               for peer in new_peers]
+                self.peer_tasks += [asyncio.create_task(peer.run(), name=f'Peer {peer.peer_info.ip}')
+                                    for peer in new_peers]
 
             try:
                 # wait for at least one queue to join
@@ -109,7 +91,7 @@ class Torrent:
                     if result.is_hash_ok():
                         # put piece in completed list
                         self.completed_pieces.append(result.piece_info.index)
-                        self.write_piece_to_disk(Piece(result.piece_info.index, 0, result.data))
+                        utils.write_active_piece(result, self.torrent_info)
                         print(f'Piece done: {result.piece_info.index}')
                     else:
                         self.pending_pieces.append(result.piece_info.index)
@@ -121,8 +103,18 @@ class Torrent:
                                                                     name=f"ActivePiece {result.uid}"))
             except TimeoutError:
                 pass
-            self._cleanup_tasks(peer_tasks)
+            self._cleanup_tasks()
 
             print(f'Progress {len(self.completed_pieces)} / {self.total_pieces} | '
-                  f'{len(peer_tasks)} connected peers\r\n')
-        print("Torrent is Done!")
+                  f'{len(self.peer_tasks)} connected peers\r\n')
+        print(f'Torrent {self.torrent_info.torrent_file} downloaded!')
+
+    async def terminate(self):
+        if self.peer_tasks:
+            print("Closing peers...")
+            await asyncio.wait([asyncio.create_task(peer.close()) for peer in self.peers])
+            print("Waiting for tasks to finish...")
+            await asyncio.wait(self.peer_tasks)
+            self._cleanup_tasks()
+        self.peers.clear()
+        print(f'Torrent {self.torrent_info.torrent_file} terminated!')

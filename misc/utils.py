@@ -5,6 +5,7 @@ import bencdec
 from messages import Message, Choke, Unchoke, Interested, Notinterested, Have, Bitfield, Request, Piece, Cancel, \
     Unknown, Handshake, Terminate
 from messages.ids import IDs
+from piece_handling.active_piece import ActivePiece
 from piece_handling.piece_info import PieceInfo
 from torrent.constants import *
 from torrent.file import File
@@ -56,6 +57,7 @@ def ensure_and_get_torrent_files(torrent_decoded_data: dict) -> tuple[File, ...]
     root_dir = f'./{torrent_decoded_data[INFO][NAME].decode()}'
     if len(root_dir) == 0:
         root_dir = '.'
+    start_byte = 0
     for file in torrent_decoded_data[INFO][FILES]:
         path = '/'.join([p.decode() for p in file[PATH]])
         path = ''.join(map(lambda x: '_' if x in illegal_path_chars else x, path))
@@ -69,7 +71,8 @@ def ensure_and_get_torrent_files(torrent_decoded_data: dict) -> tuple[File, ...]
             f.truncate(size)
             f.flush()
         f.seek(0)
-        files.append(File(f, size))
+        files.append(File(f, size, start_byte, start_byte + size - 1))
+        start_byte += size
     return tuple(files)
 
 
@@ -81,7 +84,7 @@ def get_completed_pieces(torrent_info: TorrentInfo) -> list[int]:
             bytes_left = piece_info.length
             data = b''
             while bytes_left:
-                tmp_data = torrent_info.torrent_files[file_index].file.read(bytes_left)
+                tmp_data = torrent_info.torrent_files[file_index].io.read(bytes_left)
                 data += tmp_data
                 bytes_read = len(tmp_data)
                 if bytes_read != bytes_left:
@@ -92,7 +95,7 @@ def get_completed_pieces(torrent_info: TorrentInfo) -> list[int]:
     except (Exception,):
         pass
     for file in torrent_info.torrent_files:
-        file.file.seek(0)
+        file.io.seek(0)
     return result
 
 
@@ -184,3 +187,36 @@ def bytes_to_handshake(data: bytearray) -> Handshake | Terminate | None:
                      peer_id=peer_id,
                      reserved=reserved,
                      pstr=pstr)
+
+
+def byte_in_torrent_to_file_and_offset(byte_in_torrent: int, files: tuple[File, ...]) -> tuple[int | None, int | None]:
+    for i, file in enumerate(files):
+        if file.start_byte_in_torrent <= byte_in_torrent <= file.end_byte_in_torrent:
+            return i, byte_in_torrent - file.start_byte_in_torrent
+    return None, None
+
+
+def write_active_piece(piece: ActivePiece, torrent_info: TorrentInfo) -> bool:
+    files = torrent_info.torrent_files
+    file_index, offset = byte_in_torrent_to_file_and_offset(piece.piece_info.index * torrent_info.piece_size, files)
+    if file_index is None or offset is None:
+        return False
+
+    bytes_left = piece.piece_info.length
+    start_byte = 0
+    while bytes_left:
+        file = files[file_index]
+        file.io.seek(offset)
+
+        bytes_to_write = min(bytes_left, file.size - offset)
+        end_byte = start_byte + bytes_to_write
+
+        written = file.io.write(piece.data[start_byte:end_byte])
+        if bytes_to_write != written:
+            return False
+
+        bytes_left -= written
+        start_byte = end_byte
+        file_index += 1
+        offset = 0
+    return True

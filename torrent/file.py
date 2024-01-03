@@ -1,15 +1,10 @@
+import dataclasses
 from typing import BinaryIO
 
 
+@dataclasses.dataclass(frozen=True)
 class File:
-    def __init__(self, f: BinaryIO, size: int):
-        self.__size: int = size
-        self.__f: BinaryIO = f
-
-    @property
-    def size(self) -> int:
-        return self.__size
-
-    @property
-    def file(self) -> BinaryIO:
-        return self.__f
+    io: BinaryIO
+    size: int
+    start_byte_in_torrent: int
+    end_byte_in_torrent: int
