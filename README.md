@@ -18,4 +18,6 @@ So far...
 
 7) Torrents can be resumed
 
+8) Multiple torrents can be downloaded at the same time
+
 Still more to be done...
