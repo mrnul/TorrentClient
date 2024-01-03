@@ -1,45 +1,32 @@
 import asyncio
-import dataclasses
 import math
 import time
 from asyncio import StreamReader, StreamWriter
 
+import messages.ids
 from messages import Message, Handshake, Interested, Notinterested, Bitfield, Have, \
     Terminate, Request, Unchoke, Choke, Piece, Keepalive, Cancel
 from misc import utils
+from peer.flags import Flags
 from peer.peer_info import PeerInfo
+from peer.stats import Stats
+from peer.timeouts import Timeouts
 from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
-
-
-@dataclasses.dataclass
-class PeerFlags:
-    """
-    Flags that hold the Peer status initialized to default values
-    """
-    am_choked: bool = True
-    am_choking: bool = False
-    am_interested: bool = False
-    am_interesting: bool = False  # lol
-    connected: bool = False
 
 
 class Peer:
     """
     Class that handles connection with a peer.
     """
-    __Q_TIMEOUT__ = 5.0
-    __REQUEST_TIMEOUT__ = 5.0
-    __GENERAL_COMMUNICATION_TIMEOUT__ = 30.0
-    __HANDSHAKE_TIMEOUT__ = 10.0
-    __KEEP_ALIVE_TIMEOUT__ = 60.0
-    __REQUEST_TIMEOUT_PUNISH__ = 5.0
 
     def __init__(self, peer_info: PeerInfo, torrent_info: TorrentInfo, active_pieces: tuple[ActivePiece, ...]):
         self.peer_id_str: str = peer_info.peer_id_tracker.decode(encoding='ascii', errors='ignore')
         self.writer: StreamWriter | None = None
         self.reader: StreamReader | None = None
-        self.flags = PeerFlags()
+        self.timeouts = Timeouts()
+        self.flags = Flags()
+        self.stats = Stats()
 
         self.peer_info = peer_info
         self.torrent_info: TorrentInfo = torrent_info
@@ -48,6 +35,9 @@ class Peer:
         self.last_tx_time = 0.0
 
         self.bitfield: bytearray = bytearray(math.ceil(len(self.torrent_info.pieces_info) / 8))
+
+        self.total_requests_made = 0
+        self.completed_requests = 0
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, Peer):
@@ -61,16 +51,19 @@ class Peer:
         """
         Call this function to send messages to peer
         """
-        if isinstance(msg, Interested):
-            self.flags.am_interested = True
-        elif isinstance(msg, Notinterested):
-            self.flags.am_interested = False
-
         try:
-            self.writer.write(msg.to_bytes())
-            await self.writer.drain()
-            self.last_tx_time = time.time()
-            print(f'{self.peer_info.ip} - Send: {msg}')
+            async with asyncio.timeout(self.timeouts.Send):
+                if isinstance(msg, Interested):
+                    self.flags.am_interested = True
+                elif isinstance(msg, Notinterested):
+                    self.flags.am_interested = False
+                elif isinstance(msg, Request):
+                    self.stats.total_requests_made += 1
+
+                self.writer.write(msg.to_bytes())
+                await self.writer.drain()
+                self.last_tx_time = time.time()
+                # print(f'{self.peer_info.ip} - Send: {msg}')
         except (Exception,):
             await self.close()
             return False
@@ -116,7 +109,7 @@ class Peer:
         return None, None
 
     async def _send_keep_alive_if_necessary(self):
-        if time.time() - self.last_tx_time >= self.__KEEP_ALIVE_TIMEOUT__:
+        if time.time() - self.last_tx_time >= self.timeouts.Keep_alive:
             await self._send_msg(Keepalive())
 
     async def _wait_for_response(self, request: Request, active_piece: ActivePiece):
@@ -139,6 +132,7 @@ class Peer:
             if isinstance(response, Piece):
                 if correct_piece_received(request, response):
                     if active_piece.update_data_from_piece_message(response):
+                        self.stats.completed_requests += 1
                         break
             else:
                 await self._send_msg(Cancel(request.index, request.begin, request.length))
@@ -152,23 +146,24 @@ class Peer:
         2. Sends request to peer
         3. Awaits for appropriate response
         """
+        print(f'{self.peer_info.ip} - request loop')
         while self._can_perform_request() and self.flags.connected:
             try:
-                async with asyncio.timeout(self.__Q_TIMEOUT__):
+                async with asyncio.timeout(self.timeouts.Q):
                     request, active_piece = await self._grab_request_and_active_piece_object()
             except TimeoutError:
                 await self._send_keep_alive_if_necessary()
             else:
                 try:
-                    async with asyncio.timeout(self.__REQUEST_TIMEOUT__):
-                        if not await self._send_msg(request):
-                            active_piece.put_request_back(request)
-                            return
+                    if not await self._send_msg(request):
+                        active_piece.put_request_back(request)
+                        return
+                    async with asyncio.timeout(self.timeouts.Request):
                         await self._wait_for_response(request, active_piece)
                 except TimeoutError:
                     await self._send_msg(Cancel(request.index, request.begin, request.length))
                     active_piece.put_request_back(request)
-                    await asyncio.sleep(self.__REQUEST_TIMEOUT_PUNISH__)
+                    await asyncio.sleep(self.timeouts.Punish)
 
     async def _wait_till_can_perform_request(self):
         """
@@ -179,7 +174,7 @@ class Peer:
         print(f'{self.peer_info.ip} - waiting loop')
         while not self._can_perform_request() and self.flags.connected:
             try:
-                async with asyncio.timeout(self.__GENERAL_COMMUNICATION_TIMEOUT__):
+                async with asyncio.timeout(self.timeouts.General):
                     await self._recv_and_handle_msg()
             except TimeoutError:
                 await self._send_keep_alive_if_necessary()
@@ -227,11 +222,14 @@ class Peer:
             if msg_len == 0:
                 return Keepalive()
             msg_id = int.from_bytes(await self.reader.readexactly(1))
-            msg_payload = await self.reader.readexactly(msg_len - 1)
+            if msg_id not in messages.ALL_IDs:
+                raise ConnectionError(f'Unknown ID {msg_id}. Possible communication corruption. Closing connection...')
+            remaining = msg_len - 1
+            msg_payload = await self.reader.readexactly(remaining)
             msg = utils.bytes_to_msg(msg_id, msg_payload)
         except Exception as e:
             msg = Terminate(f'Could not read from socket: {e}')
-        print(f'{self.peer_info.ip} - Recv: {msg}')
+        # print(f'{self.peer_info.ip} - Recv: {msg}')
         return msg
 
     async def _handle_received_msg(self, msg: Message) -> Message:
@@ -270,10 +268,9 @@ class Peer:
         Connect to peer send handshake and await for response
         """
         try:
-            async with asyncio.timeout(self.__HANDSHAKE_TIMEOUT__):
+            async with asyncio.timeout(self.timeouts.Handshake):
                 self.reader, self.writer = await asyncio.open_connection(self.peer_info.ip, self.peer_info.port)
                 if not await self._send_msg(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id)):
-                    await self.close()
                     return
                 msg = await self._recv_handshake()
                 if not isinstance(msg, Handshake):
@@ -287,7 +284,7 @@ class Peer:
         """
         Closes peer and resets all flags
         """
-        self.flags = PeerFlags()
+        self.flags = Flags()
         try:
             self.writer.close()
             await self.writer.wait_closed()

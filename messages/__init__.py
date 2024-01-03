@@ -12,3 +12,5 @@ from .request import Request
 from .terminate import Terminate
 from .unchoke import Unchoke
 from .unknown import Unknown
+from .ids import IDs
+from .ids import ALL_IDs

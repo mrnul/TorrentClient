@@ -51,12 +51,15 @@ def get_trackers(torrent_decoded_data: dict) -> set[str]:
 
 
 def ensure_and_get_torrent_files(torrent_decoded_data: dict) -> tuple[File, ...]:
+    illegal_path_chars = '/|\\:?*<>\"'
     files: list[File] = []
-    root_dir = torrent_decoded_data[INFO][NAME].decode()
+    root_dir = f'./{torrent_decoded_data[INFO][NAME].decode()}'
     if len(root_dir) == 0:
         root_dir = '.'
     for file in torrent_decoded_data[INFO][FILES]:
-        path = f"{root_dir}/{'/'.join([p.decode() for p in file[PATH]])}"
+        path = '/'.join([p.decode() for p in file[PATH]])
+        path = ''.join(map(lambda x: '_' if x in illegal_path_chars else x, path))
+        path = f"{root_dir}/{path}"
         size = int(file[LENGTH])
         os.makedirs(os.path.dirname(path), exist_ok=True)
         if not os.path.exists(path):

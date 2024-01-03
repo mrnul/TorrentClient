@@ -11,3 +11,6 @@ class IDs(Enum):
     request = 6
     piece = 7
     cancel = 8
+
+
+ALL_IDs = [uid.value for uid in IDs]
