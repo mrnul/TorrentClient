@@ -131,8 +131,6 @@ def get_file_and_byte_from_byte_in_torrent(piece_index: int, piece_size: int, by
     offset_byte = 0
     byte_num_in_torrent = piece_index * piece_size + byte_num
     for i, file in enumerate(file_list):
-        if not isinstance(file, File):
-            continue
         first_file_byte = offset_byte
         last_file_byte = offset_byte + file.size
         if byte_num_in_torrent in range(first_file_byte, last_file_byte):
