@@ -1,4 +1,4 @@
-from peer import PeerInfo
+from peer.peer_info import PeerInfo
 from torrent.torrent_info import TorrentInfo
 from tracker.http_tracker import HttpTracker
 from tracker.tracker_base import TrackerBase

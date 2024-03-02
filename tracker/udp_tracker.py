@@ -4,7 +4,7 @@ import struct
 import urllib.parse
 
 from misc import utils
-from peer import PeerInfo
+from peer.peer_info import PeerInfo
 from torrent.torrent_info import TorrentInfo
 from tracker.tracker_base import TrackerBase
 
@@ -17,7 +17,7 @@ class UDPTracker(TrackerBase):
         transaction_id = int.from_bytes(random.randbytes(4))
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(1.0)
-        s.bind(('', torrent_info.port))
+        s.bind(('', torrent_info.self_port))
         msg = struct.pack(">QII", 0x41727101980, 0, transaction_id)
 
         parsed_url = urllib.parse.urlparse(self.tracker)
@@ -42,7 +42,7 @@ class UDPTracker(TrackerBase):
         msg = struct.pack('>QII', conn_id, 1, transaction_id)
         msg += utils.get_info_sha1_hash(torrent_info.torrent_decoded_data)
         msg += torrent_info.self_id
-        msg += struct.pack('>QQQIIIiHH', 0, 0, 0, 0, 0, key, -1, torrent_info.port, 2)
+        msg += struct.pack('>QQQIIIiHH', 0, 0, 0, 0, 0, key, -1, torrent_info.self_port, 2)
         msg += struct.pack('>B', len(parsed_url.path))
         msg += parsed_url.path.encode()
         try:

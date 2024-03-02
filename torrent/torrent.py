@@ -3,7 +3,8 @@ import time
 from asyncio import Task
 
 from misc import utils
-from peer import Peer, PeerInfo
+from peer.peer import Peer
+from peer.peer_info import PeerInfo
 from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
 from tracker import Tracker
