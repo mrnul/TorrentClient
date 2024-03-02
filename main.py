@@ -10,8 +10,8 @@ from torrent.torrent_info import TorrentInfo
 
 
 class UdpTrackerProtocol(asyncio.DatagramProtocol):
-    def __init__(self, finish_future: Future, info_hash: bytes, self_port: int, self_id: bytes, tracker: str):
-        self.finish_future = finish_future
+    def __init__(self, info_hash: bytes, self_port: int, self_id: bytes, tracker: str):
+        self.future: Future = asyncio.get_event_loop().create_future()
         self.transport: DatagramTransport | None = None
         self.sha1 = info_hash
         self.self_port = self_port
@@ -19,14 +19,14 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
         self.tracker = tracker
         self.transaction_id = None
         self.peer_data: set[PeerInfo] = set()
-        self._handler_of_rxed_data = None
+        self._handle_rxed_data = None
 
     def _send_initial_data(self):
         print("send_initial_data")
         self.transaction_id = int.from_bytes(random.randbytes(4))
         msg = struct.pack(">QII", 0x41727101980, 0, self.transaction_id)
         self.transport.sendto(msg)
-        self._handler_of_rxed_data = self._handle_initial_data_response
+        self._handle_rxed_data = self._handle_initial_data_response
 
     def _handle_initial_data_response(self, rxed_data: bytes):
         print("_handle_initial_data_response")
@@ -44,7 +44,7 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
         msg += struct.pack('>B', len(parsed_url.hostname))
         msg += parsed_url.hostname.encode()
         self.transport.sendto(msg)
-        self._handler_of_rxed_data = self._handle_final_response
+        self._handle_rxed_data = self._handle_final_response
 
     def _handle_final_response(self, rxed_data: bytes):
         print("_handle_final_response")
@@ -57,28 +57,27 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
             self.peer_data.add(PeerInfo(ip_str, port))
         self.transport.close()
 
-    def handle_rxed_data(self, rxed_data: bytes):
-        print("handle_rxed_data")
-        if callable(self._handler_of_rxed_data):
-            return self._handler_of_rxed_data(rxed_data)
-        return None
-
     def connection_made(self, transport: DatagramTransport):
         self.transport = transport
         self._send_initial_data()
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]):
-        self.handle_rxed_data(data)
+        print("datagram_received")
+        self._handle_rxed_data(data)
 
     def error_received(self, exc: Exception):
         print('Error received:', exc)
+        self.future.set_result(exc)
 
     def connection_lost(self, exc: Exception | None):
         print(f"Connection closed - Error: {exc}")
-        self.finish_future.set_result(True)
+        self.future.set_result(self.peer_data)
 
-    def get_peers(self):
-        return self.peer_data
+    async def finish(self):
+        await self.future
+
+    def result(self):
+        return self.future.result()
 
 
 async def torrent1():
@@ -94,15 +93,11 @@ async def torrent2():
 
 
 async def test_udp():
-    loop = asyncio.get_running_loop()
-
-    finish_future = loop.create_future()
     info = TorrentInfo('test2.torrent', 6881, b'hello i am testing  ')
     tracker = 'udp://tracker.dler.org:6969/announce'
     parsed_url = urllib.parse.urlparse(tracker)
-    transport, protocol = await loop.create_datagram_endpoint(
+    transport, protocol = await asyncio.get_running_loop().create_datagram_endpoint(
         lambda: UdpTrackerProtocol(
-            finish_future=finish_future,
             info_hash=info.info_hash,
             self_port=info.self_port,
             self_id=info.self_id,
@@ -111,16 +106,15 @@ async def test_udp():
         remote_addr=(parsed_url.hostname, parsed_url.port))
 
     try:
-        await finish_future
-        print(protocol.get_peers())
+        await protocol.finish()
+        print(protocol.result())
     finally:
         transport.close()
 
 
 async def main():
     tasks = [asyncio.create_task(test_udp())]
-    tasks2 = [asyncio.create_task(asyncio.sleep(10))]
-    await asyncio.wait(tasks2)
+    await asyncio.wait(tasks)
 
 
 asyncio.run(main())
