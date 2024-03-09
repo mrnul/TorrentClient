@@ -25,7 +25,7 @@ class Torrent:
 
     async def _tracker_job(self, tracker: str):
         while True:
-            peers, interval = await Tracker(tracker).request_peers(self.torrent_info)
+            peers, interval = await Tracker(tracker, self.torrent_info).request_peers()
             print(f"{tracker} ({len(peers)}, {interval})")
             for p_i in peers:
                 peer = Peer(p_i, self.torrent_info, self.active_pieces)
