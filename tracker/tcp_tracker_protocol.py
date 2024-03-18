@@ -1,6 +1,7 @@
 import asyncio
 import http.client
 import io
+import ipaddress
 import logging
 import socket
 import urllib
@@ -57,12 +58,18 @@ class TcpTrackerProtocol(asyncio.Protocol):
         r.begin()
         self.logger.info(f'status: {r.status}')
         if r.status == 200:
-            response = bencdec.decode(r.read())
-            self.interval = response.get("interval", 60)
-            for p in response[PEERS]:
-                if not isinstance(p, OrderedDict):
-                    continue
-                self.peer_data.add(PeerInfo(p[IP].decode(), p[PORT], p[PEER_ID]))
+            raw = r.read()
+            response = bencdec.decode(raw)
+            self.interval = response.get(INTERVAL, 60)
+            raw_peers = response[PEERS]
+            if isinstance(raw_peers, bytes) and len(raw_peers) % 6 == 0:
+                for i in range(0, len(raw_peers), 6):
+                    peer_ip = ipaddress.IPv4Address(raw_peers[i: i + 4])
+                    peer_port = int.from_bytes(raw_peers[i + 4: i + 6])
+                    self.peer_data.add(PeerInfo(str(peer_ip), peer_port))
+            elif isinstance(raw_peers, OrderedDict):
+                for p in raw_peers:
+                    self.peer_data.add(PeerInfo(p[IP].decode(), p[PORT], p[PEER_ID]))
         self.transport.close()
         self.logger.info(f'result: ({len(self.peer_data)}, {self.interval})')
         self.future.set_result(self.peer_data)

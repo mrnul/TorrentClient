@@ -11,7 +11,7 @@ class TorrentInfo:
         self.trackers: set[str] = utils.get_trackers(self.torrent_decoded_data)
         self.info_hash: bytes = utils.get_info_sha1_hash(self.torrent_decoded_data)
         self.self_port: int = port
-        self.self_id: bytes = self_id
+        self.self_id: bytes = utils.build_self_id(self_id)
         self.torrent_files: tuple[File, ...] = utils.ensure_and_get_torrent_files(self.torrent_decoded_data)
         self.total_size: int = utils.get_torrent_total_size(self.torrent_files)
         self.piece_size = self.torrent_decoded_data[INFO][PIECE_LENGTH]

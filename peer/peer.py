@@ -47,7 +47,7 @@ class Peer:
     def __hash__(self) -> int:
         return hash(self.peer_info)
 
-    async def _send_msg(self, msg: Message) -> bool:
+    async def send_msg(self, msg: Message) -> bool:
         """
         Call this function to send messages to peer
         """
@@ -57,15 +57,23 @@ class Peer:
                     self.flags.am_interested = True
                 elif isinstance(msg, Notinterested):
                     self.flags.am_interested = False
+                if isinstance(msg, Choke):
+                    if self.flags.am_choking:
+                        return True
+                    self.flags.am_choking = True
+                elif isinstance(msg, Unchoke):
+                    if not self.flags.am_choking:
+                        return True
+                    self.flags.am_choking = False
                 elif isinstance(msg, Request):
                     self.stats.total_requests_made += 1
 
                 self.writer.write(msg.to_bytes())
                 await self.writer.drain()
                 self.last_tx_time = time.time()
-                # print(f'{self.peer_info.ip} - Send: {msg}')
-        except (Exception,):
+        except Exception as e:
             await self.close()
+            print(f'{self.peer_info.ip} - {e}')
             return False
         return True
 
@@ -110,7 +118,7 @@ class Peer:
 
     async def _send_keep_alive_if_necessary(self):
         if time.time() - self.last_tx_time >= self.timeouts.Keep_alive:
-            await self._send_msg(Keepalive())
+            await self.send_msg(Keepalive())
 
     async def _wait_for_response(self, request: Request, active_piece: ActivePiece):
         """
@@ -135,7 +143,7 @@ class Peer:
                         self.stats.completed_requests += 1
                         break
             else:
-                await self._send_msg(Cancel(request.index, request.begin, request.length))
+                await self.send_msg(Cancel(request.index, request.begin, request.length))
                 active_piece.put_request_back(request)
                 break
 
@@ -155,17 +163,17 @@ class Peer:
                         return
             except TimeoutError:
                 await self._send_keep_alive_if_necessary()
-            else:
-                try:
-                    if not await self._send_msg(request):
-                        active_piece.put_request_back(request)
-                        return
-                    async with asyncio.timeout(self.timeouts.Request):
-                        await self._wait_for_response(request, active_piece)
-                except TimeoutError:
-                    await self._send_msg(Cancel(request.index, request.begin, request.length))
+                continue
+            try:
+                if not await self.send_msg(request):
                     active_piece.put_request_back(request)
-                    await asyncio.sleep(self.timeouts.Punish)
+                    return
+                async with asyncio.timeout(self.timeouts.Request):
+                    await self._wait_for_response(request, active_piece)
+            except TimeoutError:
+                await self.send_msg(Cancel(request.index, request.begin, request.length))
+                active_piece.put_request_back(request)
+                await asyncio.sleep(self.timeouts.Punish)
 
     async def _wait_till_can_perform_request(self):
         """
@@ -181,11 +189,13 @@ class Peer:
             except TimeoutError:
                 await self._send_keep_alive_if_necessary()
 
-    async def run(self):
+    async def run(self, bitfield: bytes):
         """
         Handles all peer communication
         """
-        await self._connect_and_perform_handshake()
+        if await self._connect_and_perform_handshake():
+            await self.send_msg(Bitfield(bitfield))
+            await self.send_msg(Unchoke())
         while self.flags.connected:
             await self._wait_till_can_perform_request()
             await self._request_loop()
@@ -225,13 +235,12 @@ class Peer:
                 return Keepalive()
             msg_id = int.from_bytes(await self.reader.readexactly(1))
             if msg_id not in messages.ALL_IDs:
-                raise ConnectionError(f'Unknown ID {msg_id}. Possible communication corruption. Closing connection...')
+                return Terminate(f'Unknown ID {msg_id}. Possible communication corruption. Closing connection...')
             remaining = msg_len - 1
             msg_payload = await self.reader.readexactly(remaining)
             msg = utils.bytes_to_msg(msg_id, msg_payload)
         except Exception as e:
             msg = Terminate(f'Could not read from socket: {e}')
-        # print(f'{self.peer_info.ip} - Recv: {msg}')
         return msg
 
     async def _handle_received_msg(self, msg: Message) -> Message:
@@ -242,8 +251,10 @@ class Peer:
             await self.close()
         elif isinstance(msg, Unchoke):
             self.flags.am_choked = False
+            await self.send_msg(Unchoke())
         elif isinstance(msg, Choke):
             self.flags.am_choked = True
+            await self.send_msg(Choke())
         elif isinstance(msg, Interested):
             self.flags.am_interesting = True
         elif isinstance(msg, Notinterested):
@@ -251,12 +262,17 @@ class Peer:
         elif isinstance(msg, Bitfield):
             if len(self.bitfield) != len(msg.bitfield):
                 await self.close()
-                return Terminate(f'Received bitfield length {len(msg.bitfield)} but expected {len(self.bitfield)}')
+                msg = Terminate(f'Received bitfield length {len(msg.bitfield)} but expected {len(self.bitfield)}')
             self.bitfield = msg.bitfield
-            if not await self._send_msg(Interested()):
+            if not await self.send_msg(Interested()):
                 msg = Terminate(f'Could not send Interested')
         elif isinstance(msg, Have):
             utils.set_bit_value(self.bitfield, msg.piece_index, 1)
+        elif isinstance(msg, Request):
+            print(f'! ***** I never get requests... Why? ***** !')
+            response: Piece = utils.read_piece(msg, self.torrent_info)
+            if not await self.send_msg(response):
+                msg = Terminate(f'Could not send Interested')
         return msg
 
     async def _recv_and_handle_msg(self) -> Message | None:
@@ -272,7 +288,7 @@ class Peer:
         try:
             async with asyncio.timeout(self.timeouts.Handshake):
                 self.reader, self.writer = await asyncio.open_connection(self.peer_info.ip, self.peer_info.port)
-                if not await self._send_msg(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id)):
+                if not await self.send_msg(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id)):
                     return
                 msg = await self._recv_handshake()
                 if not isinstance(msg, Handshake):

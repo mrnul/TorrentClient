@@ -1,4 +1,5 @@
 import hashlib
+import math
 import os
 
 import bencdec
@@ -218,3 +219,44 @@ def write_active_piece(piece: ActivePiece, torrent_info: TorrentInfo) -> bool:
         file_index += 1
         offset = 0
     return True
+
+
+def read_piece(request: Request, torrent_info: TorrentInfo) -> Piece | None:
+    files = torrent_info.torrent_files
+    file_index, offset = byte_in_torrent_to_file_and_offset(request.index * torrent_info.piece_size, files)
+    if file_index is None or offset is None:
+        return None
+
+    result: bytearray = bytearray()
+    bytes_left = request.length
+    while bytes_left:
+        file: File = files[file_index]
+        file.io.seek(offset)
+
+        bytes_to_read = min(bytes_left, file.size - offset)
+        bytes_read = file.io.read(bytes_to_read)
+        if bytes_to_read != len(bytes_read):
+            return None
+
+        result.extend(bytes_read)
+
+        bytes_left -= len(bytes_read)
+        file_index += 1
+        offset = 0
+
+    return Piece(request.index, request.begin, bytes(result))
+
+
+def build_bitfield(completed_pieces: list[int], piece_count: int) -> bytearray:
+    bitfield = bytearray(math.ceil(piece_count / 8))
+    for piece in completed_pieces:
+        set_bit_value(bitfield, piece, 1)
+    return bitfield
+
+
+def build_self_id(self_id: bytes, length: int = 20) -> bytes:
+    result = bytearray(self_id)
+    if len(result) > length:
+        return result[:length]
+    self_id += b' ' * (length - len(result))
+    return bytes(self_id)
