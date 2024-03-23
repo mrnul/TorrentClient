@@ -2,7 +2,7 @@ import os
 
 from messages import Piece, Request
 from piece_handling.active_piece import ActivePiece
-from file_handler.file import File
+from file_handling.file import File
 from torrent.torrent_info import TorrentInfo
 
 

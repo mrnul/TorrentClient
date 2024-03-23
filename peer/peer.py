@@ -4,7 +4,7 @@ import time
 from asyncio import StreamReader, StreamWriter
 
 import messages.ids
-from file_handler.file_handler import FileHandler
+from file_handling.file_handler import FileHandler
 from messages import Message, Handshake, Interested, Notinterested, Bitfield, Have, \
     Terminate, Request, Unchoke, Choke, Piece, Keepalive, Cancel
 from misc import utils

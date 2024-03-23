@@ -1,7 +1,7 @@
 import asyncio
 from asyncio import Task
 
-from file_handler.file_handler import FileHandler
+from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
 from peer.peer import Peer
 from piece_handling.active_piece import ActivePiece

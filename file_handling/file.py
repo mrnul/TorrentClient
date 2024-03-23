@@ -1,7 +1,7 @@
 import dataclasses
 from typing import BinaryIO
 
-from file_handler.file_info import FileInfo
+from file_handling.file_info import FileInfo
 
 
 @dataclasses.dataclass(frozen=True)

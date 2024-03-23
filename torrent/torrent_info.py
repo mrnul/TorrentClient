@@ -2,7 +2,7 @@ import bencdec
 from misc import utils
 from piece_handling.piece_info import PieceInfo
 from torrent.constants import *
-from file_handler.file_info import FileInfo
+from file_handling.file_info import FileInfo
 
 
 class TorrentInfo:
