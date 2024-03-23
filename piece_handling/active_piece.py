@@ -8,10 +8,10 @@ from piece_handling.piece_info import PieceInfo
 class ActivePiece:
     __MAX_REQUEST_LENGTH__ = 2 ** 14
 
-    def __init__(self, uid: int):
-        self.uid: int = uid
-        self.piece_info: PieceInfo | None = None
-        self.data: bytearray = bytearray()
+    def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None, data: bytearray = bytearray()):
+        self.uid: int | None = uid
+        self.piece_info: PieceInfo | None = piece_info
+        self.data: bytearray = data
         self._requests: asyncio.Queue[Request] = asyncio.Queue()
 
     def set(self, piece_info: PieceInfo | None):
