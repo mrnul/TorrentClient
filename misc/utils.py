@@ -10,6 +10,9 @@ def calculate_hash(data: bytes) -> bytes:
 
 
 def bytes_to_msg(msg_id: int, data: bytes) -> Message:
+    """
+    Translates data to the appropriate message given the message id
+    """
     match msg_id:
         case IDs.choke.value:
             return Choke()

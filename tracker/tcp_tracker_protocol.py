@@ -17,6 +17,9 @@ from torrent.constants import *
 
 
 class TcpTrackerProtocol(asyncio.Protocol):
+    """
+    Protocol that performs request to a TCP tracker in order to get info about a torrent
+    """
     def __init__(self, info_hash: bytes, self_port: int, self_id: bytes, tracker: str, logger: logging.Logger):
         self.logger = logger
         self.future: Future = asyncio.get_event_loop().create_future()
@@ -71,7 +74,6 @@ class TcpTrackerProtocol(asyncio.Protocol):
                 for p in raw_peers:
                     self.peer_data.add(PeerInfo(p[IP].decode(), p[PORT], p[PEER_ID]))
         self.transport.close()
-        self.logger.info(f'result: ({len(self.peer_data)}, {self.interval})')
         self.future.set_result(self.peer_data)
 
     async def finish(self):

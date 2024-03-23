@@ -7,12 +7,18 @@ from torrent.torrent_info import TorrentInfo
 
 
 class FileHandler:
+    """
+    Class to handle files in torrent
+    """
     def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
         self.files: tuple[File, ...] = self._ensure_files()
         self.completed_pieces: list[int] = self.get_completed_pieces()
 
     def _ensure_files(self):
+        """
+        Ensures that directories and files in torrent are created and have the correct length
+        """
         files: list[File] = []
         for file in self.torrent_info.files_info:
             os.makedirs(os.path.dirname(file.path), exist_ok=True)
@@ -27,6 +33,9 @@ class FileHandler:
         return tuple(files)
 
     def get_completed_pieces(self) -> list[int]:
+        """
+        Get a list of completed pieces' index
+        """
         result: list[int] = []
         try:
             file_index = 0
@@ -49,6 +58,9 @@ class FileHandler:
         return result
 
     def write_piece(self, index: int, data: bytes) -> bool:
+        """
+        Writes a piece to the appropriate torrent files
+        """
         file_index, offset = self.byte_in_torrent_to_file_and_offset(index * self.torrent_info.piece_size)
         if file_index is None or offset is None:
             return False
@@ -72,12 +84,18 @@ class FileHandler:
         return True
 
     def byte_in_torrent_to_file_and_offset(self, byte_in_torrent: int) -> tuple[int | None, int | None]:
+        """
+        It figures out which file and offset correspond to a byte in torrent
+        """
         for i, file in enumerate(self.files):
             if file.info.start_byte_in_torrent <= byte_in_torrent <= file.info.end_byte_in_torrent:
                 return i, byte_in_torrent - file.info.start_byte_in_torrent
         return None, None
 
     def read_piece(self, request: Request) -> Piece | None:
+        """
+        Reads the appropriate piece that can be used as a response to a request
+        """
         file_index, offset = self.byte_in_torrent_to_file_and_offset(request.index * self.torrent_info.piece_size)
         if file_index is None or offset is None:
             return None

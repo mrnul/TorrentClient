@@ -6,6 +6,9 @@ from file_handler.file_info import FileInfo
 
 
 class TorrentInfo:
+    """
+    Class to parse torrent file and hold info in a convenient way
+    """
     def __init__(self, torrent_file: str, port: int, self_id: bytes):
         torrent_decoded_data = self._decode_torrent_file(torrent_file)
         self.torrent_file: str = torrent_file
@@ -20,6 +23,9 @@ class TorrentInfo:
 
     @staticmethod
     def _build_self_id(self_id: bytes, length: int = 20) -> bytes:
+        """
+        Ensures that self_id is exactly length bytes long
+        """
         result = bytearray(self_id)
         if len(result) > length:
             return result[:length]
@@ -28,11 +34,17 @@ class TorrentInfo:
 
     @staticmethod
     def _decode_torrent_file(torrent_file: str) -> dict:
+        """
+        Decides bencoded torrent data
+        """
         with open(torrent_file, mode='rb') as f:
             return bencdec.decode(f.read())
 
     @staticmethod
     def _parse_trackers(torrent_decoded_data: dict) -> set[str]:
+        """
+        Get tracker info from torrent file
+        """
         trackers: set[str] = set()
         if ANNOUNCE in torrent_decoded_data:
             trackers |= {torrent_decoded_data[ANNOUNCE].decode()}
@@ -50,6 +62,9 @@ class TorrentInfo:
 
     @staticmethod
     def _parse_files(torrent_decoded_data: dict) -> tuple[FileInfo, ...]:
+        """
+        Get a list of FileInfo that contain information about files in torrent
+        """
         illegal_path_chars = '/|\\:?*<>\"'
         files: list[FileInfo] = []
         root_dir = f'./{torrent_decoded_data[INFO][NAME].decode()}'
@@ -67,10 +82,16 @@ class TorrentInfo:
 
     @staticmethod
     def _calculate_total_size(torrent_decoded_data: dict) -> int:
+        """
+        Get the total size of all files in torrent
+        """
         return sum(int(file[LENGTH]) for file in torrent_decoded_data[INFO][FILES])
 
     @staticmethod
     def _load_torrent_pieces(torrent_decoded_data: dict, total_size: int) -> tuple[PieceInfo, ...]:
+        """
+        Get list of PieceInfo for every piece in torrent
+        """
         remaining_size: int = total_size
         piece_info_list: list[PieceInfo] = []
         piece_length: int = torrent_decoded_data[INFO][PIECE_LENGTH]

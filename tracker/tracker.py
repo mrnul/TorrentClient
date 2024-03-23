@@ -11,6 +11,9 @@ from tracker.udp_tracker_protocol import UdpTrackerProtocol
 
 
 class Tracker:
+    """
+    Class to handle tracker tcp and udp protocols
+    """
 
     def __init__(self, tracker: str, torrent_info: TorrentInfo):
         self.tracker: str = tracker

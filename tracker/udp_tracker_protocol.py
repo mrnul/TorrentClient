@@ -9,6 +9,9 @@ from peer.peer_info import PeerInfo
 
 
 class UdpTrackerProtocol(asyncio.DatagramProtocol):
+    """
+    Protocol that performs request to a UDP tracker in order to get info about a torrent
+    """
     def __init__(self, info_hash: bytes, self_port: int, self_id: bytes, tracker: str, logger: logging.Logger):
         self.logger = logger
         self.future: Future = asyncio.get_event_loop().create_future()

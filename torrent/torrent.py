@@ -10,6 +10,9 @@ from tracker import Tracker
 
 
 class Torrent:
+    """
+    A class that represent a torrent and handles download/upload sessions
+    """
     __MAX_ACTIVE_PIECES__ = 10
     __PROGRESS_TIMEOUT__ = 10.0
 
@@ -25,6 +28,9 @@ class Torrent:
         self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.file_handler.completed_pieces, self.piece_count)
 
     async def _tracker_job(self, tracker: str):
+        """
+        Tracker jobs run in the background to periodically perform requests, get peer lists and create peer tasks
+        """
         while True:
             peers, interval = await Tracker(tracker, self.torrent_info).request_peers()
             print(f"{tracker} ({len(peers)}, {interval})")
@@ -47,12 +53,20 @@ class Torrent:
             self.tracker_tasks.append(asyncio.create_task(self._tracker_job(tracker), name=f'Tracker {tracker}'))
 
     def _choose_pending_piece(self) -> int | None:
+        """
+        Strategy to choose which piece should be downloaded
+
+        For now just get the first piece
+        """
         try:
             return self.pending_pieces.pop(0)
         except IndexError:
             return None
 
     def _update_active_piece(self, active_piece: ActivePiece) -> bool:
+        """
+        Each time a piece is done (that is, no requests remain in queue) we should update it to a new pending piece
+        """
         piece_index = self._choose_pending_piece()
         if piece_index is None:
             active_piece.set(None)
@@ -76,6 +90,9 @@ class Torrent:
             self.peer_tasks.remove(done_task)
 
     async def download(self):
+        """
+        Initializes active pieces, begins trackers and runs until all pieces are completed
+        """
         print(f'Loaded: {len(self.file_handler.completed_pieces)} / {self.piece_count}')
         # initialize ActivePiece structures
         self._initialize_active_pieces()
@@ -121,6 +138,11 @@ class Torrent:
         print(f'Torrent {self.torrent_info.torrent_file} downloaded!')
 
     async def terminate(self):
+        """
+        Performs cleanup
+
+        I don't think it works properly
+        """
         if self.tracker_tasks:
             print("Closing trackers...")
             [tracker.cancel() for tracker in self.tracker_tasks]
