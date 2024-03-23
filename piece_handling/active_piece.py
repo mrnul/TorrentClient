@@ -12,7 +12,7 @@ class ActivePiece:
         self.uid: int | None = uid
         self.piece_info: PieceInfo | None = piece_info
         self.data: bytearray = data
-        self._requests: asyncio.Queue[Request] = asyncio.Queue()
+        self._requests: asyncio.Queue[Request] = asyncio.Queue() if uid is not None else None
 
     def set(self, piece_info: PieceInfo | None):
         self.piece_info = piece_info
