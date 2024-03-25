@@ -117,10 +117,11 @@ class Torrent:
                         # put piece in completed list
                         self.file_handler.completed_pieces.append(result.piece_info.index)
                         self.file_handler.write_piece(result.piece_info.index, 0, result.data)
+                        self.bitfield.set_bit_value(result.piece_info.index, 1)
                         print(f'Piece done: {result.piece_info.index}')
                         for peer in self.peers:
                             if peer.flags.connected:
-                                _ = asyncio.create_task(peer.send_msg(Have(result.piece_info.index)))
+                                peer.enqueue_msg(Have(result.piece_info.index))
                     else:
                         self.pending_pieces.append(result.piece_info.index)
                         print(f'Hash error: {result.piece_info.index}')

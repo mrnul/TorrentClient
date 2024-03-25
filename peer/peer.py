@@ -38,6 +38,7 @@ class Peer:
         self.last_tx_time = 0.0
         self.bitfield: Bitfield = Bitfield(bytes(math.ceil(len(self.torrent_info.pieces_info) / 8)))
 
+        self.remaining_bytes = 0
         self.total_requests_made = 0
         self.completed_requests = 0
 
@@ -48,6 +49,10 @@ class Peer:
 
     def __hash__(self) -> int:
         return hash(self.peer_info)
+
+    def enqueue_msg(self, msg: Message):
+        if not self.writer.is_closing():
+            self.writer.write(msg.to_bytes())
 
     async def send_msg(self, msg: Message) -> bool:
         """
@@ -70,9 +75,9 @@ class Peer:
                 elif isinstance(msg, Request):
                     self.stats.total_requests_made += 1
 
-                self.writer.write(msg.to_bytes())
-                await self.writer.drain()
-                self.last_tx_time = time.time()
+                if self.enqueue_msg(msg):
+                    await self.writer.drain()
+                    self.last_tx_time = time.time()
         except Exception as e:
             await self.close()
             print(f'{self.peer_info.ip} - {e}')
@@ -225,7 +230,7 @@ class Peer:
             peer_id = await self.reader.readexactly(20)
             return Handshake(info_hash, peer_id, pstr, reserved)
         except Exception as e:
-            return Terminate(f'Could not read from socket: {e}')
+            return Terminate(f'_recv_handshake - Could not read from socket: {e}')
 
     async def _recv_msg(self) -> Message:
         """
@@ -239,12 +244,12 @@ class Peer:
                 return Keepalive()
             msg_id = int.from_bytes(await self.reader.readexactly(1))
             if msg_id not in messages.ALL_IDs:
-                return Terminate(f'Unknown ID {msg_id}. Possible communication error')
+                return Terminate(f'_recv_msg - Unknown ID {msg_id}. Possible communication error')
             remaining = msg_len - 1
             msg_payload = await self.reader.readexactly(remaining)
             msg = utils.bytes_to_msg(msg_id, msg_payload)
         except Exception as e:
-            msg = Terminate(f'Could not read from socket: {e}')
+            msg = Terminate(f'_recv_msg - Could not read from socket: {e}')
         return msg
 
     async def _handle_received_msg(self, msg: Message) -> Message:
@@ -252,7 +257,6 @@ class Peer:
         Handles received message by sending appropriate responses and updating flags
         """
         if isinstance(msg, Terminate):
-            print(f'{self.peer_info.ip} - {msg}')
             await self.close()
         elif isinstance(msg, Unchoke):
             self.flags.am_choked = False
@@ -261,23 +265,30 @@ class Peer:
             self.flags.am_choked = True
             await self.send_msg(Choke())
         elif isinstance(msg, Interested):
+            print(f'{self.peer_info.ip} - {msg}')
             self.flags.am_interesting = True
         elif isinstance(msg, Notinterested):
+            print(f'{self.peer_info.ip} - {msg}')
             self.flags.am_interesting = False  # lol
         elif isinstance(msg, Bitfield):
             if len(self.bitfield.data) != len(msg.data):
                 await self.close()
-                msg = Terminate(f'Received bitfield length {len(msg.data)} but expected {len(self.bitfield.data)}')
-            self.bitfield = Bitfield(msg.data)
-            if not await self.send_msg(Interested()):
-                msg = Terminate(f'Could not send Interested')
+                msg = Terminate(f'_handle_received_msg - Received bitfield length {len(msg.data)} '
+                                f'but expected {len(self.bitfield.data)}')
+            else:
+                self.bitfield = Bitfield(msg.data)
+                if not await self.send_msg(Interested()):
+                    msg = Terminate(f'_handle_received_msg - Could not send Interested')
         elif isinstance(msg, Have):
             self.bitfield.set_bit_value(msg.piece_index, 1)
         elif isinstance(msg, Request):
             print(f'! ***** I never get requests... Why? ***** !')
             response: Piece = self.file_handler.read_piece(msg)
             if not response or not await self.send_msg(response):
-                msg = Terminate(f'Could not send Piece')
+                msg = Terminate(f'_handle_received_msg - Could not send Piece')
+
+        if isinstance(msg, Terminate):
+            print(f'{self.peer_info.ip} - {msg}')
         return msg
 
     async def _recv_and_handle_msg(self) -> Message | None:
