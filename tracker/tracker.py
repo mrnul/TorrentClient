@@ -19,7 +19,8 @@ class Tracker:
         self.tracker: str = tracker
         self.torrent_info: TorrentInfo = torrent_info
         self.parsed_url = urllib.parse.urlparse(self.tracker)
-        self.tracker_logs_directory = f'./tracker_logs/{self.torrent_info.torrent_file} - {self.parsed_url.scheme}'
+        self.tracker_logs_directory = (f'./tracker_logs/{os.path.basename(self.torrent_info.torrent_file)} - '
+                                       f'{self.parsed_url.scheme}')
         os.makedirs(self.tracker_logs_directory, exist_ok=True)
         log_file = os.path.join(self.tracker_logs_directory, f'{self.parsed_url.hostname}.log')
         self.logger = Logger().get(log_file, log_file)

@@ -57,11 +57,11 @@ class FileHandler:
             file.io.seek(0)
         return result
 
-    def write_piece(self, index: int, data: bytes) -> bool:
+    def write_piece(self, index: int, begin: int, data: bytes) -> bool:
         """
         Writes a piece to the appropriate torrent files
         """
-        file_index, offset = self.byte_in_torrent_to_file_and_offset(index * self.torrent_info.piece_size)
+        file_index, offset = self.byte_in_torrent_to_file_and_offset(index * self.torrent_info.piece_size + begin)
         if file_index is None or offset is None:
             return False
 
@@ -96,7 +96,9 @@ class FileHandler:
         """
         Reads the appropriate piece that can be used as a response to a request
         """
-        file_index, offset = self.byte_in_torrent_to_file_and_offset(request.index * self.torrent_info.piece_size)
+        file_index, offset = self.byte_in_torrent_to_file_and_offset(
+            request.index * self.torrent_info.piece_size + request.begin
+        )
         if file_index is None or offset is None:
             return None
 

@@ -239,7 +239,7 @@ class Peer:
                 return Keepalive()
             msg_id = int.from_bytes(await self.reader.readexactly(1))
             if msg_id not in messages.ALL_IDs:
-                return Terminate(f'Unknown ID {msg_id}. Possible communication corruption. Closing connection...')
+                return Terminate(f'Unknown ID {msg_id}. Possible communication error')
             remaining = msg_len - 1
             msg_payload = await self.reader.readexactly(remaining)
             msg = utils.bytes_to_msg(msg_id, msg_payload)
@@ -252,6 +252,7 @@ class Peer:
         Handles received message by sending appropriate responses and updating flags
         """
         if isinstance(msg, Terminate):
+            print(f'{self.peer_info.ip} - {msg}')
             await self.close()
         elif isinstance(msg, Unchoke):
             self.flags.am_choked = False

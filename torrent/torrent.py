@@ -3,7 +3,7 @@ from asyncio import Task
 
 from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
-from peer.peer import Peer
+from peer import Peer
 from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
 from tracker import Tracker
@@ -116,7 +116,7 @@ class Torrent:
                     if result.is_hash_ok():
                         # put piece in completed list
                         self.file_handler.completed_pieces.append(result.piece_info.index)
-                        self.file_handler.write_piece(result.piece_info.index, result.data)
+                        self.file_handler.write_piece(result.piece_info.index, 0, result.data)
                         print(f'Piece done: {result.piece_info.index}')
                         for peer in self.peers:
                             if peer.flags.connected:

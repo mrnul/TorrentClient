@@ -65,7 +65,7 @@ class TorrentInfo:
         """
         Get a list of FileInfo that contain information about files in torrent
         """
-        illegal_path_chars = '/|\\:?*<>\"'
+        illegal_path_chars = '|:?*<>\"'
         files: list[FileInfo] = []
         root_dir = f'./{torrent_decoded_data[INFO][NAME].decode()}'
         if len(root_dir) == 0:
