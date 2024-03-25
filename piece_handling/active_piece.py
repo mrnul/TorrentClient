@@ -1,6 +1,6 @@
 import asyncio
 
-from messages import Request, Piece
+from messages import Request
 from misc import utils
 from piece_handling.piece_info import PieceInfo
 
@@ -11,34 +11,19 @@ class ActivePiece:
     """
     __MAX_REQUEST_LENGTH__ = 2 ** 14
 
-    def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None, data: bytearray = bytearray()):
+    def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None):
         self.uid: int | None = uid
         self.piece_info: PieceInfo | None = piece_info
-        self.data: bytearray = data
         self._requests: asyncio.Queue[Request] = asyncio.Queue() if uid is not None else None
 
     def set(self, piece_info: PieceInfo | None):
         self.piece_info = piece_info
-        self.data = bytearray()
         if self.piece_info is None:
             return
-        self.data = bytearray(piece_info.length)
         self._build_requests()
 
-    def update_data_from_piece_message(self, piece: Piece) -> bool:
-        """
-        Whenever a piece is received data should be updated inside active piece
-        """
-        if piece.index != self.piece_info.index:
-            return False
-        a = piece.begin
-        b = piece.begin + len(piece.block)
-        self.data[a:b:] = piece.block
-        self._requests.task_done()
-        return True
-
-    def is_hash_ok(self) -> bool:
-        return utils.calculate_hash(self.data) == self.piece_info.hash_value
+    def is_hash_ok(self, data: bytes) -> bool:
+        return utils.calculate_hash(data) == self.piece_info.hash_value
 
     def _build_requests(self):
         """
@@ -72,3 +57,6 @@ class ActivePiece:
         self._requests.put_nowait(request)
         self._requests.task_done()
         return True
+
+    def request_done(self):
+        self._requests.task_done()

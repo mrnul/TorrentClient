@@ -51,7 +51,7 @@ class Peer:
         return hash(self.peer_info)
 
     def enqueue_msg(self, msg: Message):
-        if not self.writer.is_closing():
+        if self.writer and not self.writer.is_closing():
             self.writer.write(msg.to_bytes())
 
     async def send_msg(self, msg: Message) -> bool:
@@ -146,7 +146,8 @@ class Peer:
             response = await self._recv_piece_or_terminate_or_choke()
             if isinstance(response, Piece):
                 if correct_piece_received(request, response):
-                    if active_piece.update_data_from_piece_message(response):
+                    if self.file_handler.write_piece(response.index, response.begin, response.block):
+                        active_piece.request_done()
                         self.stats.completed_requests += 1
                         break
             else:
@@ -283,7 +284,7 @@ class Peer:
             self.bitfield.set_bit_value(msg.piece_index, 1)
         elif isinstance(msg, Request):
             print(f'! ***** I never get requests... Why? ***** !')
-            response: Piece = self.file_handler.read_piece(msg)
+            response: Piece = self.file_handler.read_piece(msg.index, msg.begin, msg.length)
             if not response or not await self.send_msg(response):
                 msg = Terminate(f'_handle_received_msg - Could not send Piece')
 

@@ -5,6 +5,7 @@ from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
 from peer import Peer
 from piece_handling.active_piece import ActivePiece
+from piece_handling.piece_info import PieceInfo
 from torrent.torrent_info import TorrentInfo
 from tracker import Tracker
 
@@ -105,31 +106,35 @@ class Torrent:
         while len(self.file_handler.completed_pieces) != self.piece_count:
             try:
                 # wait for at least one queue to join
-                done, pending_piece_tasks = await asyncio.wait(pending_piece_tasks,
-                                                               return_when=asyncio.FIRST_COMPLETED,
-                                                               timeout=self.__PROGRESS_TIMEOUT__)
+                done, pending_piece_tasks = await asyncio.wait(
+                    pending_piece_tasks,
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=self.__PROGRESS_TIMEOUT__
+                )
                 for done_piece in done:
                     # get the ActivePiece object
                     result: ActivePiece = done_piece.result()
+                    piece_info: PieceInfo = result.piece_info
                     if result.piece_info is None:
                         continue
-                    if result.is_hash_ok():
+
+                    data = self.file_handler.read_piece(piece_info.index, 0, piece_info.length).block
+                    if result.is_hash_ok(data):
                         # put piece in completed list
-                        self.file_handler.completed_pieces.append(result.piece_info.index)
-                        self.file_handler.write_piece(result.piece_info.index, 0, result.data)
-                        self.bitfield.set_bit_value(result.piece_info.index, 1)
-                        print(f'Piece done: {result.piece_info.index}')
+                        self.file_handler.completed_pieces.append(piece_info.index)
+                        self.bitfield.set_bit_value(piece_info.index, 1)
+                        print(f'Piece done: {piece_info.index}')
                         for peer in self.peers:
-                            if peer.flags.connected:
-                                peer.enqueue_msg(Have(result.piece_info.index))
+                            peer.enqueue_msg(Have(piece_info.index))
                     else:
-                        self.pending_pieces.append(result.piece_info.index)
-                        print(f'Hash error: {result.piece_info.index}')
+                        self.pending_pieces.append(piece_info.index)
+                        print(f'Hash error: {piece_info.index}')
                     # update object to a new piece (if any)
                     if self._update_active_piece(result):
                         # create a new pending task that will join on the newly updated queue
-                        pending_piece_tasks.add(asyncio.create_task(result.join_queue(),
-                                                                    name=f"ActivePiece {result.uid}"))
+                        pending_piece_tasks.add(
+                            asyncio.create_task(result.join_queue(), name=f"ActivePiece {result.uid}")
+                        )
             except TimeoutError:
                 pass
             self._cleanup_peer_tasks()

@@ -1,8 +1,8 @@
 import os
 
-from messages import Piece, Request
-from piece_handling.active_piece import ActivePiece
 from file_handling.file import File
+from messages import Piece
+from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
 
 
@@ -49,7 +49,7 @@ class FileHandler:
                     if bytes_read != bytes_left:
                         file_index += 1
                     bytes_left -= bytes_read
-                if ActivePiece(piece_info=piece_info, data=bytearray(data)).is_hash_ok():
+                if ActivePiece(piece_info=piece_info).is_hash_ok(data):
                     result.append(piece_info.index)
         except (Exception,):
             pass
@@ -67,7 +67,7 @@ class FileHandler:
 
         bytes_left = len(data)
         start_byte = 0
-        while bytes_left:
+        while bytes_left and file_index < len(self.files):
             self.files[file_index].io.seek(offset)
 
             bytes_to_write = min(bytes_left, self.files[file_index].info.size - offset)
@@ -92,22 +92,22 @@ class FileHandler:
                 return i, byte_in_torrent - file.info.start_byte_in_torrent
         return None, None
 
-    def read_piece(self, request: Request) -> Piece | None:
+    def read_piece(self, index: int, begin: int, length: int) -> Piece | None:
         """
         Reads the appropriate piece that can be used as a response to a request
         """
         file_index, offset = self.byte_in_torrent_to_file_and_offset(
-            request.index * self.torrent_info.piece_size + request.begin
+            index * self.torrent_info.piece_size + begin
         )
         if file_index is None or offset is None:
             return None
 
         result: bytearray = bytearray()
-        bytes_left = request.length
-        while bytes_left:
+        bytes_left = length
+        while bytes_left and file_index < len(self.files):
             self.files[file_index].io.seek(offset)
 
-            bytes_to_read = min(bytes_left, self.files[file_index].size - offset)
+            bytes_to_read = min(bytes_left, self.files[file_index].info.size - offset)
             bytes_read = self.files[file_index].io.read(bytes_to_read)
             if bytes_to_read != len(bytes_read):
                 return None
@@ -117,4 +117,4 @@ class FileHandler:
             bytes_left -= len(bytes_read)
             file_index += 1
             offset = 0
-        return Piece(request.index, request.begin, bytes(result))
+        return Piece(index, begin, bytes(result))
