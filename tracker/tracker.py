@@ -69,7 +69,7 @@ class Tracker:
             port=80,
         )
 
-    async def request_peers(self) -> tuple[list[PeerInfo], int]:
+    async def request_peers(self) -> tuple[set[PeerInfo], int]:
         scheme = self.parsed_url.scheme.casefold()
         self.logger.info(f"request_peers - {scheme}")
         try:
@@ -83,12 +83,11 @@ class Tracker:
                         transport, protocol = await self._build_udp_transport_and_protocol()
                     case _:
                         raise ValueError(f"Unknown scheme: {scheme}")
-                try:
-                    await protocol.finish()
-                finally:
-                    transport.close()
-        except TimeoutError:
-            pass
+                await protocol.finish()
+                transport.close()
+        except TimeoutError or ValueError:
+            transport.close()
+            return set(), 0
         peers, interval = protocol.result()
         self.logger.info(f"Result: ({len(peers)}, {interval})")
         return peers, interval

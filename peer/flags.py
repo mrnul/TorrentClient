@@ -10,4 +10,3 @@ class Flags:
     am_choking: bool = True
     am_interested: bool = False
     am_interesting: bool = False  # lol
-    connected: bool = False

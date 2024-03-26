@@ -42,6 +42,9 @@ class Peer:
         self.total_requests_made = 0
         self.completed_requests = 0
 
+    def __repr__(self):
+        return f"{self.peer_info.ip}:{self.peer_info.port}"
+
     def __eq__(self, other) -> bool:
         if not isinstance(other, Peer):
             return False
@@ -51,7 +54,7 @@ class Peer:
         return hash(self.peer_info)
 
     def enqueue_msg(self, msg: Message):
-        if self.writer and not self.writer.is_closing():
+        if self._is_writer_ok():
             self.writer.write(msg.to_bytes())
 
     async def send_msg(self, msg: Message) -> bool:
@@ -78,9 +81,9 @@ class Peer:
                 if self.enqueue_msg(msg):
                     await self.writer.drain()
                     self.last_tx_time = time.time()
-        except Exception as e:
+        except (TimeoutError, OSError) as e:
             await self.close()
-            print(f'{self.peer_info.ip} - {e}')
+            print(f'{self} - {e}')
             return False
         return True
 
@@ -89,7 +92,7 @@ class Peer:
         Awaits to receive one of the following: Piece, Terminate, Choke
         """
         msg = None
-        while self.flags.connected:
+        while self._is_writer_ok():
             msg = await self._recv_and_handle_msg()
             if isinstance(msg, Piece) or isinstance(msg, Terminate) or isinstance(msg, Choke):
                 break
@@ -110,7 +113,7 @@ class Peer:
         Helper function to grab requests from active pieces
         Need to think of something clever here...
         """
-        while self.flags.connected:
+        while self._is_writer_ok():
             for a_p in self.active_pieces:
                 if a_p.piece_info is None:
                     continue
@@ -118,7 +121,7 @@ class Peer:
                     continue
                 try:
                     return a_p.get_request(), a_p
-                except (Exception,):
+                except asyncio.QueueEmpty:
                     pass
             await asyncio.sleep(0.5)
         return None, None
@@ -162,8 +165,8 @@ class Peer:
         2. Sends request to peer
         3. Awaits for appropriate response
         """
-        print(f'{self.peer_info.ip} - request loop')
-        while self._can_perform_request() and self.flags.connected:
+        print(f'{self} - request loop')
+        while self._can_perform_request() and self._is_writer_ok():
             try:
                 async with asyncio.timeout(self.timeouts.Q):
                     request, active_piece = await self._grab_request_and_active_piece_object()
@@ -189,8 +192,8 @@ class Peer:
         1. Receive peer msg
         2. Handle peer msg
         """
-        print(f'{self.peer_info.ip} - waiting loop')
-        while not self._can_perform_request() and self.flags.connected:
+        print(f'{self} - waiting loop')
+        while not self._can_perform_request() and self._is_writer_ok():
             try:
                 async with asyncio.timeout(self.timeouts.General):
                     await self._recv_and_handle_msg()
@@ -205,10 +208,10 @@ class Peer:
             await self.send_msg(bitfield)
             await self.send_msg(Unchoke())
 
-        while self.flags.connected:
+        while self._is_writer_ok():
             await self._wait_till_can_perform_request()
             await self._request_loop()
-        print(f'{self.peer_info.ip} - Goodbye')
+        print(f'{self} - Goodbye')
 
     def has_piece(self, piece_index: int) -> bool:
         """
@@ -230,7 +233,7 @@ class Peer:
             info_hash = await self.reader.readexactly(20)
             peer_id = await self.reader.readexactly(20)
             return Handshake(info_hash, peer_id, pstr, reserved)
-        except Exception as e:
+        except asyncio.IncompleteReadError or OSError as e:
             return Terminate(f'_recv_handshake - Could not read from socket: {e}')
 
     async def _recv_msg(self) -> Message:
@@ -249,7 +252,7 @@ class Peer:
             remaining = msg_len - 1
             msg_payload = await self.reader.readexactly(remaining)
             msg = utils.bytes_to_msg(msg_id, msg_payload)
-        except Exception as e:
+        except (OSError, asyncio.IncompleteReadError) as e:
             msg = Terminate(f'_recv_msg - Could not read from socket: {e}')
         return msg
 
@@ -266,10 +269,10 @@ class Peer:
             self.flags.am_choked = True
             await self.send_msg(Choke())
         elif isinstance(msg, Interested):
-            print(f'{self.peer_info.ip} - {msg}')
+            print(f'{self} - {msg}')
             self.flags.am_interesting = True
         elif isinstance(msg, Notinterested):
-            print(f'{self.peer_info.ip} - {msg}')
+            print(f'{self} - {msg}')
             self.flags.am_interesting = False  # lol
         elif isinstance(msg, Bitfield):
             if len(self.bitfield.data) != len(msg.data):
@@ -289,7 +292,7 @@ class Peer:
                 msg = Terminate(f'_handle_received_msg - Could not send Piece')
 
         if isinstance(msg, Terminate):
-            print(f'{self.peer_info.ip} - {msg}')
+            print(f'{self} - {msg}')
         return msg
 
     async def _recv_and_handle_msg(self) -> Message | None:
@@ -312,7 +315,14 @@ class Peer:
                     await self.close()
                     return False
                 self.flags.connected = True
-        except (Exception,):
+        except OSError:
+            return False
+        return True
+
+    def _is_writer_ok(self) -> bool:
+        if not self.writer:
+            return False
+        if self.writer.is_closing():
             return False
         return True
 
@@ -320,9 +330,8 @@ class Peer:
         """
         Closes peer and resets all flags
         """
+        if not self._is_writer_ok():
+            return
         self.flags = Flags()
-        try:
-            self.writer.close()
-            await self.writer.wait_closed()
-        except (Exception,):
-            pass
+        self.writer.close()
+        await self.writer.wait_closed()

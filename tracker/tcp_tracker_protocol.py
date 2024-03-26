@@ -58,7 +58,11 @@ class TcpTrackerProtocol(asyncio.Protocol):
         self.logger.info('connection_lost')
         r = http.client.HTTPResponse(socket.socket())
         r.fp = io.BytesIO(self.data_rxed)
-        r.begin()
+        try:
+            r.begin()
+        except http.client.RemoteDisconnected:
+            r.status = None
+
         self.logger.info(f'status: {r.status}')
         if r.status == 200:
             raw = r.read()
@@ -79,5 +83,5 @@ class TcpTrackerProtocol(asyncio.Protocol):
     async def finish(self):
         await self.future
 
-    def result(self) -> tuple[list[PeerInfo], int]:
+    def result(self) -> tuple[set[PeerInfo], int]:
         return self.future.result(), self.interval

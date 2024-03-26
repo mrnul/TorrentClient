@@ -72,13 +72,13 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
         self._handle_rxed_data(data)
 
     def error_received(self, exc: Exception):
-        pass
+        self.transport.close()
 
     def connection_lost(self, exc: Exception | None):
-        pass
+        self.transport.close()
 
     async def finish(self):
         await self.future
 
-    def result(self) -> tuple[list[PeerInfo], int]:
+    def result(self) -> tuple[set[PeerInfo], int]:
         return self.future.result(), self.interval
