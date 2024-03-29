@@ -5,7 +5,7 @@ from asyncio import StreamReader, StreamWriter
 
 import messages.ids
 from file_handling.file_handler import FileHandler
-from messages import Message, Handshake, Interested, Notinterested, Bitfield, Have, \
+from messages import Message, Handshake, Interested, NotInterested, Bitfield, Have, \
     Terminate, Request, Unchoke, Choke, Piece, Keepalive, Cancel
 from misc import utils
 from peer.flags import Flags
@@ -65,7 +65,7 @@ class Peer:
             async with asyncio.timeout(self.timeouts.Send):
                 if isinstance(msg, Interested):
                     self.flags.am_interested = True
-                elif isinstance(msg, Notinterested):
+                elif isinstance(msg, NotInterested):
                     self.flags.am_interested = False
                 if isinstance(msg, Choke):
                     if self.flags.am_choking:
@@ -142,7 +142,7 @@ class Peer:
             return (
                     req.index == res.index
                     and req.begin == res.begin
-                    and req.length == len(res.block)
+                    and req.data_length == len(res.block)
             )
 
         while True:
@@ -154,7 +154,7 @@ class Peer:
                         self.stats.completed_requests += 1
                         break
             else:
-                await self.send_msg(Cancel(request.index, request.begin, request.length))
+                await self.send_msg(Cancel(request.index, request.begin, request.data_length))
                 active_piece.put_request_back(request)
                 break
 
@@ -182,7 +182,7 @@ class Peer:
                 async with asyncio.timeout(self.timeouts.Request):
                     await self._wait_for_response(request, active_piece)
             except TimeoutError:
-                await self.send_msg(Cancel(request.index, request.begin, request.length))
+                await self.send_msg(Cancel(request.index, request.begin, request.data_length))
                 active_piece.put_request_back(request)
                 await asyncio.sleep(self.timeouts.Punish)
 
@@ -271,7 +271,7 @@ class Peer:
         elif isinstance(msg, Interested):
             print(f'{self} - {msg}')
             self.flags.am_interesting = True
-        elif isinstance(msg, Notinterested):
+        elif isinstance(msg, NotInterested):
             print(f'{self} - {msg}')
             self.flags.am_interesting = False  # lol
         elif isinstance(msg, Bitfield):
@@ -284,10 +284,10 @@ class Peer:
                 if not await self.send_msg(Interested()):
                     msg = Terminate(f'_handle_received_msg - Could not send Interested')
         elif isinstance(msg, Have):
-            self.bitfield.set_bit_value(msg.piece_index, 1)
+            self.bitfield.set_bit_value(msg.piece_index, True)
         elif isinstance(msg, Request):
-            print(f'! ***** I never get requests... Why? ***** !')
-            response: Piece = self.file_handler.read_piece(msg.index, msg.begin, msg.length)
+            print(f'{self} - {msg}')
+            response: Piece = self.file_handler.read_piece(msg.index, msg.begin, msg.data_length)
             if not response or not await self.send_msg(response):
                 msg = Terminate(f'_handle_received_msg - Could not send Piece')
 

@@ -14,7 +14,6 @@ class Torrent:
     """
     A class that represent a torrent and handles download/upload sessions
     """
-    __MAX_ACTIVE_PIECES__ = 10
     __PROGRESS_TIMEOUT__ = 10.0
 
     def __init__(self, torrent_info: TorrentInfo):
@@ -24,10 +23,10 @@ class Torrent:
         self.peer_tasks: set[Task] = set()
         self.tracker_tasks: set[Task] = set()
         self.piece_tasks: set[Task] = set()
-        self.active_pieces: tuple[ActivePiece, ...] = tuple(ActivePiece(i) for i in range(self.__MAX_ACTIVE_PIECES__))
         self.piece_count: int = len(self.torrent_info.pieces_info)
         self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.file_handler.completed_pieces))
         self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.file_handler.completed_pieces, self.piece_count)
+        self.active_pieces: tuple[ActivePiece, ...] = tuple(ActivePiece(i) for i in range(len(self.pending_pieces)))
 
     async def _tracker_job(self, tracker: str):
         """
@@ -137,7 +136,7 @@ class Torrent:
                     if result.is_hash_ok(data):
                         # put piece in completed list
                         self.file_handler.completed_pieces.append(piece_info.index)
-                        self.bitfield.set_bit_value(piece_info.index, 1)
+                        self.bitfield.set_bit_value(piece_info.index, True)
                         print(f'Piece done: {piece_info.index}')
                         for peer in self.peers:
                             peer.enqueue_msg(Have(piece_info.index))
@@ -165,7 +164,8 @@ class Torrent:
         I don't think it works properly
         """
         await self._cancel_tasks(self.tracker_tasks)
-        await self._cancel_tasks(self.peer_tasks)
+        await asyncio.gather(*[peer.close() for peer in self.peers])
+        await asyncio.gather(*self.peer_tasks)
         await self._cancel_tasks(self.piece_tasks)
         await self._cleanup_tasks(self.tracker_tasks)
         await self._cleanup_tasks(self.peer_tasks)

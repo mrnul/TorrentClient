@@ -78,7 +78,8 @@ class TcpTrackerProtocol(asyncio.Protocol):
                 for p in raw_peers:
                     self.peer_data.add(PeerInfo(p[IP].decode(), p[PORT], p[PEER_ID]))
         self.transport.close()
-        self.future.set_result(self.peer_data)
+        if not self.future.cancelled():
+            self.future.set_result(self.peer_data)
 
     async def finish(self):
         await self.future

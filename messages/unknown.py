@@ -9,4 +9,4 @@ class Unknown(Message):
         self.payload = payload
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IB', self.len, self.id) + self.payload
+        return struct.pack('>IB', self.message_length, self.id) + self.payload

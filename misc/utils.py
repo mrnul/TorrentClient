@@ -1,6 +1,6 @@
 import hashlib
 
-from messages import Message, Choke, Unchoke, Interested, Notinterested, Have, Bitfield, Request, Piece, Cancel, \
+from messages import Message, Choke, Unchoke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel, \
     Unknown
 from messages.ids import IDs
 
@@ -21,7 +21,7 @@ def bytes_to_msg(msg_id: int, data: bytes) -> Message:
         case IDs.interested.value:
             return Interested()
         case IDs.not_interested.value:
-            return Notinterested()
+            return NotInterested()
         case IDs.have.value:
             return Have(piece_index=int.from_bytes(data))
         case IDs.bitfield.value:
@@ -29,7 +29,7 @@ def bytes_to_msg(msg_id: int, data: bytes) -> Message:
         case IDs.request.value:
             return Request(index=int.from_bytes(data[0:4]),
                            begin=int.from_bytes(data[4:8]),
-                           length=int.from_bytes(data[8:12]))
+                           data_length=int.from_bytes(data[8:12]))
         case IDs.piece.value:
             return Piece(index=int.from_bytes(data[0:4]),
                          begin=int.from_bytes(data[4:8]),
@@ -37,6 +37,6 @@ def bytes_to_msg(msg_id: int, data: bytes) -> Message:
         case IDs.cancel.value:
             return Cancel(index=int.from_bytes(data[0:4]),
                           begin=int.from_bytes(data[4:8]),
-                          length=int.from_bytes(data[8:13]))
+                          data_length=int.from_bytes(data[8:13]))
         case _:
             return Unknown(msg_id, data)

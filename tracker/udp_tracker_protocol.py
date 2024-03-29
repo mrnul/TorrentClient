@@ -60,8 +60,9 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
             ip, port = struct.unpack_from('>IH', rxed_data, offset)
             ip_str = '.'.join(str(byte) for byte in int(ip).to_bytes(4))
             self.peer_data.add(PeerInfo(ip_str, port))
-        self.future.set_result(self.peer_data)
         self.transport.close()
+        if not self.future.cancelled():
+            self.future.set_result(self.peer_data)
 
     def connection_made(self, transport: DatagramTransport):
         self.logger.info('connection_made')

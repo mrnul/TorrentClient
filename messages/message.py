@@ -2,8 +2,8 @@ class Message:
     """
     Base class for all messages
     """
-    def __init__(self, length: int | None, uid: int | None):
-        self.len = length
+    def __init__(self, message_length: int | None, uid: int | None):
+        self.message_length = message_length
         self.id = uid
 
     def __str__(self) -> str:

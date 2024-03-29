@@ -6,7 +6,7 @@ from .handshake import Handshake
 from .have import Have
 from .interested import Interested
 from .keepalive import Keepalive
-from .notinterested import Notinterested
+from .notinterested import NotInterested
 from .piece import Piece
 from .request import Request
 from .terminate import Terminate

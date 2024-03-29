@@ -11,13 +11,13 @@ class Bitfield(Message):
         self.data: bytearray = bytearray(bitfield)
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IB', self.len, self.id) + self.data
+        return struct.pack('>IB', self.message_length, self.id) + self.data
 
     @staticmethod
     def from_completed_pieces(completed_pieces: list[int], piece_count: int):
         bitfield: Bitfield = Bitfield(bytes(math.ceil(piece_count / 8)))
         for piece in completed_pieces:
-            bitfield.set_bit_value(piece, 1)
+            bitfield.set_bit_value(piece, True)
         return bitfield
 
     @staticmethod
@@ -32,7 +32,7 @@ class Bitfield(Message):
             return 0
         return (self.data[byte_index] >> bit_num_in_byte) & 1
 
-    def set_bit_value(self, bit_num: int, new_value: int):
+    def set_bit_value(self, bit_num: int, new_value: bool):
         byte_index, bit_num_in_byte = self._get_byte_bit_pair(bit_num)
         if byte_index >= len(self.data):
             return
