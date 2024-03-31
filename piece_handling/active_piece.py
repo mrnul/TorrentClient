@@ -14,12 +14,18 @@ class ActivePiece:
     def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None):
         self.uid: int | None = uid
         self.piece_info: PieceInfo | None = piece_info
-        self._requests: asyncio.Queue[Request] = asyncio.Queue() if uid is not None else None
+        self._requests: asyncio.Queue[Request] | None = None
+        self.set(piece_info)
+
+    def __repr__(self):
+        return f"uid: {self.uid} | requests: {self._requests.qsize()}"
 
     def set(self, piece_info: PieceInfo | None):
         self.piece_info = piece_info
-        if self.piece_info is None:
+        if self.piece_info is None or self.uid is None:
             return
+        if self._requests is None:
+            self._requests = asyncio.Queue()
         self._build_requests()
 
     def is_hash_ok(self, data: bytes) -> bool:

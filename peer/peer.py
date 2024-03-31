@@ -22,7 +22,7 @@ class Peer:
     """
 
     def __init__(self, peer_info: PeerInfo, torrent_info: TorrentInfo,
-                 file_handler: FileHandler, active_pieces: tuple[ActivePiece, ...]):
+                 file_handler: FileHandler, active_pieces: list[ActivePiece]):
         self.peer_id_str: str = peer_info.peer_id_tracker.decode(encoding='ascii', errors='ignore')
         self.writer: StreamWriter | None = None
         self.reader: StreamReader | None = None
@@ -34,7 +34,7 @@ class Peer:
         self.torrent_info: TorrentInfo = torrent_info
         self.file_handler = file_handler
         self.peer_id_handshake: bytes = bytes()
-        self.active_pieces: tuple[ActivePiece, ...] = active_pieces
+        self.active_pieces: list[ActivePiece] = active_pieces
         self.last_tx_time = 0.0
         self.bitfield: Bitfield = Bitfield(bytes(math.ceil(len(self.torrent_info.pieces_info) / 8)))
 

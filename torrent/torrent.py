@@ -16,7 +16,7 @@ class Torrent:
     """
     __PROGRESS_TIMEOUT__ = 10.0
 
-    def __init__(self, torrent_info: TorrentInfo):
+    def __init__(self, torrent_info: TorrentInfo, max_active_pieces: int = 0):
         self.torrent_info = torrent_info
         self.file_handler = FileHandler(self.torrent_info)
         self.peers: set[Peer] = set()
@@ -26,7 +26,8 @@ class Torrent:
         self.piece_count: int = len(self.torrent_info.pieces_info)
         self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.file_handler.completed_pieces))
         self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.file_handler.completed_pieces, self.piece_count)
-        self.active_pieces: tuple[ActivePiece, ...] = tuple(ActivePiece(i) for i in range(len(self.pending_pieces)))
+        self.max_active_pieces: int = max_active_pieces if max_active_pieces else len(self.pending_pieces)
+        self.active_pieces: list[ActivePiece] = []
 
     async def _tracker_job(self, tracker: str):
         """
@@ -64,24 +65,11 @@ class Torrent:
         except IndexError:
             return None
 
-    def _update_active_piece(self, active_piece: ActivePiece) -> bool:
-        """
-        Each time a piece is done (that is, no requests remain in queue) we should update it to a new pending piece
-        """
-        piece_index = self._choose_pending_piece()
-        if piece_index is None:
-            active_piece.set(None)
-            return False
-        active_piece.set(self.torrent_info.pieces_info[piece_index])
-        print(f'New active piece: {piece_index}')
-        return True
-
-    def _initialize_active_pieces(self):
-        for active_piece in self.active_pieces:
-            self._update_active_piece(active_piece)
-
     @staticmethod
     async def _cancel_tasks(tasks: set[Task]):
+        """
+        Method to cancel and await for tasks to complete
+        """
         if not tasks:
             return
         for task in tasks:
@@ -90,19 +78,57 @@ class Torrent:
 
     @staticmethod
     async def _cleanup_tasks(tasks: set[Task]):
-        done_tasks = [task for task in tasks if task.done() or task.cancelled()]
+        """
+        Method to check and remove from set tasks that are done
+        """
+        done_tasks = [task for task in tasks if task.done()]
         for done_task in done_tasks:
             tasks.remove(done_task)
 
-    def _cleanup_tracker_tasks(self):
-        done_tasks = [task for task in self.tracker_tasks if task.done() or task.cancelled()]
-        for done_task in done_tasks:
-            self.tracker_tasks.remove(done_task)
+    def _handle_completed_piece(self, piece: ActivePiece):
+        """
+        Marks piece as complete
+        Notifies other peers with Have message
+        Removes related active piece from list
+        """
+        self.file_handler.completed_pieces.append(piece.piece_info.index)
+        self.bitfield.set_bit_value(piece.piece_info.index, True)
+        print(f'Piece done: {piece.piece_info.index}')
+        for peer in self.peers:
+            peer.enqueue_msg(Have(piece.piece_info.index))
+        self.active_pieces.remove(piece)
 
-    def _cleanup_peer_tasks(self):
-        done_tasks = [task for task in self.peer_tasks if task.done() or task.cancelled()]
-        for done_task in done_tasks:
-            self.peer_tasks.remove(done_task)
+    def _handle_hash_error(self, piece: ActivePiece):
+        """
+        An active piece can be completed but with wrong hash value
+        Put that piece back in pending pieces list in order to be downloaded again at some point
+        """
+        print(f'Hash error: {piece.piece_info.index}')
+        self.pending_pieces.append(piece.piece_info.index)
+
+    def _update_active_pieces(self):
+        """
+        Ensures that active piece list has at most max_active_pieces elements
+        Creates new actives pieces if necessary and their appropriate piece_tasks to await on request queue
+        """
+        active_pieces_count = len(self.active_pieces)
+        if active_pieces_count >= self.max_active_pieces:
+            print("Will not update active pieces")
+            return
+        pieces_to_create = min(self.max_active_pieces - active_pieces_count, len(self.pending_pieces))
+        print(f"Creating {pieces_to_create} new active pieces")
+        for _ in range(pieces_to_create):
+            piece_index = self._choose_pending_piece()
+            if piece_index is None:
+                continue
+            piece_info = self.torrent_info.pieces_info[piece_index]
+            new_active_piece = ActivePiece(piece_index)
+            new_active_piece.set(piece_info)
+            self.active_pieces.append(new_active_piece)
+            print(f"New active piece added: {new_active_piece}")
+            self.piece_tasks.add(
+                asyncio.create_task(new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.uid}")
+            )
 
     async def download(self):
         """
@@ -110,12 +136,9 @@ class Torrent:
         """
         print(f'Loaded: {len(self.file_handler.completed_pieces)} / {self.piece_count}')
         # initialize ActivePiece structures
-        self._initialize_active_pieces()
+        self._update_active_pieces()
         self._begin_trackers()
 
-        # build tasks that will join on active piece queues
-        self.piece_tasks = set(asyncio.create_task(ap.join_queue(), name=f"ActivePiece {ap.uid}")
-                               for ap in self.active_pieces)
         # loop as long as there are pieces that are not completed
         while len(self.file_handler.completed_pieces) != self.piece_count:
             try:
@@ -126,29 +149,16 @@ class Torrent:
                     timeout=self.__PROGRESS_TIMEOUT__
                 )
                 for done_piece in done:
-                    # get the ActivePiece object
                     result: ActivePiece = done_piece.result()
                     piece_info: PieceInfo = result.piece_info
-                    if result.piece_info is None:
-                        continue
 
                     data = self.file_handler.read_piece(piece_info.index, 0, piece_info.length).block
                     if result.is_hash_ok(data):
-                        # put piece in completed list
-                        self.file_handler.completed_pieces.append(piece_info.index)
-                        self.bitfield.set_bit_value(piece_info.index, True)
-                        print(f'Piece done: {piece_info.index}')
-                        for peer in self.peers:
-                            peer.enqueue_msg(Have(piece_info.index))
+                        self._handle_completed_piece(result)
                     else:
-                        self.pending_pieces.append(piece_info.index)
-                        print(f'Hash error: {piece_info.index}')
-                    # update object to a new piece (if any)
-                    if self._update_active_piece(result):
-                        # create a new pending task that will join on the newly updated queue
-                        self.piece_tasks.add(
-                            asyncio.create_task(result.join_queue(), name=f"ActivePiece {result.uid}")
-                        )
+                        self._handle_hash_error(result)
+                    self._update_active_pieces()
+                    print(f"Active pieces count: {len(self.active_pieces)}")
             except TimeoutError:
                 pass
             await self._cleanup_tasks(self.peer_tasks)
