@@ -14,3 +14,22 @@ class Handshake(Message):
 
     def to_bytes(self) -> bytes:
         return self.pstrlen.to_bytes(1) + self.pstr + self.reserved + self.info_hash + self.peer_id
+
+    def from_bytes(self, data: bytearray):
+        if len(data) < 68:
+            return None
+        self.pstrlen = int.from_bytes(data[0:1])
+        if self.pstrlen != 19:
+            raise ValueError(f'Handshake pstrlen is {self.pstrlen} but expected 19')
+        self.pstr = data[1:20]
+        if self.pstr != b'BitTorrent protocol':
+            raise ValueError(f'Handshake protocol is {self.pstr} but expected "BitTorrent protocol"')
+        self.reserved = data[21:29]
+        self.info_hash = data[29:49]
+        self.peer_id = data[49:69]
+        return Handshake(
+            info_hash=self.info_hash,
+            peer_id=self.peer_id,
+            reserved=self.reserved,
+            pstr=self.pstr
+        )

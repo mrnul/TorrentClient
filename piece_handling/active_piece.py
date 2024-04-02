@@ -1,40 +1,41 @@
 import asyncio
 
-from messages import Request, Piece
+from messages import Request
 from misc import utils
 from piece_handling.piece_info import PieceInfo
 
 
 class ActivePiece:
+    """
+    Active piece is a piece that peers can perform requests and download
+    """
     __MAX_REQUEST_LENGTH__ = 2 ** 14
 
-    def __init__(self, uid: int):
-        self.uid: int = uid
-        self.piece_info: PieceInfo | None = None
-        self.data: bytearray = bytearray()
-        self._requests: asyncio.Queue[Request] = asyncio.Queue()
+    def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None):
+        self.uid: int | None = uid
+        self.piece_info: PieceInfo | None = piece_info
+        self._requests: asyncio.Queue[Request] | None = None
+        self.set(piece_info)
+
+    def __repr__(self):
+        return f"uid: {self.uid} | requests: {self._requests.qsize()}"
 
     def set(self, piece_info: PieceInfo | None):
         self.piece_info = piece_info
-        self.data = bytearray()
-        if self.piece_info is None:
+        if self.piece_info is None or self.uid is None:
             return
-        self.data = bytearray(piece_info.length)
+        if self._requests is None:
+            self._requests = asyncio.Queue()
         self._build_requests()
 
-    def update_data_from_piece_message(self, piece: Piece) -> bool:
-        if piece.index != self.piece_info.index:
-            return False
-        a = piece.begin
-        b = piece.begin + len(piece.block)
-        self.data[a:b:] = piece.block
-        self._requests.task_done()
-        return True
-
-    def is_hash_ok(self) -> bool:
-        return utils.calculate_hash(self.data) == self.piece_info.hash_value
+    def is_hash_ok(self, data: bytes) -> bool:
+        return utils.calculate_hash(data) == self.piece_info.hash_value
 
     def _build_requests(self):
+        """
+        In order to download pieces requests should be made to other peers
+        Build the appropriate requests to be ready for transmission
+        """
         bytes_left = self.piece_info.length
         offset = 0
         while bytes_left:
@@ -51,6 +52,10 @@ class ActivePiece:
         return self._requests.get_nowait()
 
     def put_request_back(self, request: Request) -> bool:
+        """
+        In case a request is not fulfilled for some reason, put the request back
+        Some peer will grab it to retry
+        """
         if request is None or self.piece_info is None:
             return False
         if request.index != self.piece_info.index:
@@ -59,5 +64,5 @@ class ActivePiece:
         self._requests.task_done()
         return True
 
-    def task_done(self):
+    def request_done(self):
         self._requests.task_done()

@@ -10,4 +10,4 @@ class Have(Message):
         self.piece_index = piece_index
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IBI', self.len, self.id, self.piece_index)
+        return struct.pack('>IBI', self.message_length, self.id, self.piece_index)
