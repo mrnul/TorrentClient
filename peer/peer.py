@@ -114,16 +114,16 @@ class Peer:
         Need to think of something clever here...
         """
         while self._is_writer_ok():
-            for a_p in self.active_pieces:
-                if a_p.piece_info is None:
+            for active_piece in self.active_pieces:
+                if active_piece.piece_info is None:
                     continue
-                if not self.has_piece(a_p.piece_info.index):
+                if not self.has_piece(active_piece.piece_info.index):
                     continue
-                try:
-                    return a_p.get_request(), a_p
-                except asyncio.QueueEmpty:
-                    pass
-            await asyncio.sleep(0.5)
+                req = active_piece.get_request()
+                if not req:
+                    continue
+                return req, active_piece
+            await asyncio.sleep(1.0)
         return None, None
 
     async def _send_keep_alive_if_necessary(self):
@@ -211,6 +211,7 @@ class Peer:
         while self._is_writer_ok():
             await self._wait_till_can_perform_request()
             await self._request_loop()
+        await self.close()
         print(f'{self} - Goodbye')
 
     def has_piece(self, piece_index: int) -> bool:
@@ -330,8 +331,8 @@ class Peer:
         """
         Closes peer and resets all flags
         """
+        self.flags = Flags()
         if not self._is_writer_ok():
             return
-        self.flags = Flags()
         self.writer.close()
         await self.writer.wait_closed()

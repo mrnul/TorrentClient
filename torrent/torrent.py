@@ -163,8 +163,11 @@ class Torrent:
                 pass
             await self._cleanup_tasks(self.peer_tasks)
 
-            print(f'Progress {len(self.file_handler.completed_pieces)} / {self.piece_count} | '
-                  f'{len(self.peer_tasks)} connected peers\r\n')
+            print(
+                f'Progress {len(self.file_handler.completed_pieces)} / {self.piece_count} | '
+                f'{len(self.peer_tasks)} connected peers | '
+                f'{sum(1 for peer in self.peers if not peer.flags.am_choked)} active peers\r\n'
+            )
         print(f'Torrent {self.torrent_info.torrent_file} downloaded!')
 
     async def terminate(self):

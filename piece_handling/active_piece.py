@@ -49,7 +49,9 @@ class ActivePiece:
         return self
 
     def get_request(self):
-        return self._requests.get_nowait()
+        if self._requests.qsize() > 0:
+            return self._requests.get_nowait()
+        return None
 
     def put_request_back(self, request: Request) -> bool:
         """
