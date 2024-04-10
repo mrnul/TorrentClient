@@ -24,8 +24,9 @@ class Torrent:
         self.tracker_tasks: set[Task] = set()
         self.piece_tasks: set[Task] = set()
         self.piece_count: int = len(self.torrent_info.pieces_info)
-        self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.file_handler.completed_pieces))
-        self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.file_handler.completed_pieces, self.piece_count)
+        self.completed_pieces: list[int] = self.file_handler.get_completed_pieces()
+        self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.completed_pieces))
+        self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.completed_pieces, self.piece_count)
         self.max_active_pieces: int = max_active_pieces if max_active_pieces else len(self.pending_pieces)
         self.active_pieces: list[ActivePiece] = []
 
@@ -35,7 +36,6 @@ class Torrent:
         """
         while True:
             peers, interval = await Tracker(tracker, self.torrent_info).request_peers()
-            print(f"{tracker} ({len(peers)}, {interval})")
             for p_i in peers:
                 peer = Peer(p_i, self.torrent_info, self.file_handler, self.active_pieces)
                 if peer not in self.peers:
@@ -91,11 +91,11 @@ class Torrent:
         Notifies other peers with Have message
         Removes related active piece from list
         """
-        self.file_handler.completed_pieces.append(piece.piece_info.index)
+        self.completed_pieces.append(piece.piece_info.index)
         self.bitfield.set_bit_value(piece.piece_info.index, True)
         print(f'Piece done: {piece.piece_info.index}')
         for peer in self.peers:
-            peer.enqueue_msg(Have(piece.piece_info.index))
+            peer.send(Have(piece.piece_info.index))
         self.active_pieces.remove(piece)
 
     def _handle_hash_error(self, piece: ActivePiece):
@@ -113,10 +113,8 @@ class Torrent:
         """
         active_pieces_count = len(self.active_pieces)
         if active_pieces_count >= self.max_active_pieces:
-            print("Will not update active pieces")
             return
         pieces_to_create = min(self.max_active_pieces - active_pieces_count, len(self.pending_pieces))
-        print(f"Creating {pieces_to_create} new active pieces")
         for _ in range(pieces_to_create):
             piece_index = self._choose_pending_piece()
             if piece_index is None:
@@ -125,7 +123,6 @@ class Torrent:
             new_active_piece = ActivePiece(piece_index)
             new_active_piece.set(piece_info)
             self.active_pieces.append(new_active_piece)
-            print(f"New active piece added: {new_active_piece}")
             self.piece_tasks.add(
                 asyncio.create_task(new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.uid}")
             )
@@ -134,13 +131,13 @@ class Torrent:
         """
         Initializes active pieces, begins trackers and runs until all pieces are completed
         """
-        print(f'Loaded: {len(self.file_handler.completed_pieces)} / {self.piece_count}')
+        print(f'Loaded: {len(self.completed_pieces)} / {self.piece_count}')
         # initialize ActivePiece structures
         self._update_active_pieces()
         self._begin_trackers()
 
         # loop as long as there are pieces that are not completed
-        while len(self.file_handler.completed_pieces) != self.piece_count:
+        while len(self.completed_pieces) != self.piece_count:
             try:
                 # wait for at least one queue to join
                 done, self.piece_tasks = await asyncio.wait(
@@ -164,9 +161,8 @@ class Torrent:
             await self._cleanup_tasks(self.peer_tasks)
 
             print(
-                f'Progress {len(self.file_handler.completed_pieces)} / {self.piece_count} | '
-                f'{len(self.peer_tasks)} connected peers | '
-                f'{sum(1 for peer in self.peers if not peer.flags.am_choked)} active peers\r\n'
+                f'Progress {len(self.completed_pieces)} / {self.piece_count} | '
+                f'{len(self.peer_tasks)} connected peers\r\n'
             )
         print(f'Torrent {self.torrent_info.torrent_file} downloaded!')
 
@@ -176,12 +172,8 @@ class Torrent:
 
         I don't think it works properly
         """
+
         await self._cancel_tasks(self.tracker_tasks)
-        await asyncio.gather(*[peer.close() for peer in self.peers])
-        await asyncio.gather(*self.peer_tasks)
         await self._cancel_tasks(self.piece_tasks)
-        await self._cleanup_tasks(self.tracker_tasks)
-        await self._cleanup_tasks(self.peer_tasks)
-        await self._cleanup_tasks(self.piece_tasks)
-        self.peers.clear()
+        await self._cancel_tasks(self.peer_tasks)
         print(f'Torrent {self.torrent_info.torrent_file} terminated!')

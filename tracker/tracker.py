@@ -1,5 +1,6 @@
 import asyncio
 import os
+import socket
 import ssl
 import urllib.parse
 
@@ -72,6 +73,7 @@ class Tracker:
     async def request_peers(self) -> tuple[set[PeerInfo], int]:
         scheme = self.parsed_url.scheme.casefold()
         self.logger.info(f"request_peers - {scheme}")
+        transport, protocol = None, None
         try:
             async with asyncio.timeout(10):
                 match scheme:
@@ -85,9 +87,10 @@ class Tracker:
                         raise ValueError(f"Unknown scheme: {scheme}")
                 await protocol.finish()
                 transport.close()
-        except TimeoutError or ValueError:
-            transport.close()
-            return set(), 0
-        peers, interval = protocol.result()
-        self.logger.info(f"Result: ({len(peers)}, {interval})")
+                peers, interval = protocol.result()
+        except (TimeoutError, ValueError, OSError):
+            if transport:
+                transport.close()
+            peers, interval = set(), 0
+        self.logger.info(f"result: ({len(peers)}, {interval})")
         return peers, interval

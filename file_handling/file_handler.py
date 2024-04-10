@@ -2,7 +2,7 @@ import os
 
 from file_handling.file import File
 from messages import Piece
-from piece_handling.active_piece import ActivePiece
+from misc import utils
 from torrent.torrent_info import TorrentInfo
 
 
@@ -13,9 +13,8 @@ class FileHandler:
     def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
         self.files: tuple[File, ...] = self._ensure_files()
-        self.completed_pieces: list[int] = self.get_completed_pieces()
 
-    def _ensure_files(self):
+    def _ensure_files(self) -> tuple[File, ...]:
         """
         Ensures that directories and files in torrent are created and have the correct length
         """
@@ -49,7 +48,7 @@ class FileHandler:
                     if bytes_read != bytes_left:
                         file_index += 1
                     bytes_left -= bytes_read
-                if ActivePiece(piece_info=piece_info).is_hash_ok(data):
+                if utils.calculate_hash(data) == piece_info.hash_value:
                     result.append(piece_info.index)
         except (Exception,):
             pass
