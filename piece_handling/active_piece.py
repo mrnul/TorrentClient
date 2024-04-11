@@ -40,7 +40,7 @@ class ActivePiece:
         offset = 0
         while bytes_left:
             length = min(self.__MAX_REQUEST_LENGTH__, bytes_left)
-            self._requests.put_nowait(Request(self.piece_info.index, offset, length))
+            self._requests.put_nowait(Request(self.piece_info.index, offset, length, self))
             offset += length
             bytes_left -= length
 

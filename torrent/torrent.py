@@ -162,7 +162,8 @@ class Torrent:
 
             print(
                 f'Progress {len(self.completed_pieces)} / {self.piece_count} | '
-                f'{len(self.peer_tasks)} connected peers\r\n'
+                f'{len(self.peer_tasks)} connected peers | '
+                f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers\r\n'
             )
         print(f'Torrent {self.torrent_info.torrent_file} downloaded!')
 

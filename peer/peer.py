@@ -1,10 +1,12 @@
 import asyncio
+from asyncio import Task
 
 from file_handling.file_handler import FileHandler
-from messages import Request, Bitfield, Message, Handshake
+from messages import Bitfield, Message, Handshake, Request
 from misc import utils
 from peer.peer_info import PeerInfo
 from peer.tcp_peer_protocol import TcpPeerProtocol
+from peer.timeouts import Timeouts
 from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
 
@@ -34,16 +36,28 @@ class Peer:
     def __hash__(self) -> int:
         return hash(self.peer_info)
 
-    def _grab_active_piece_and_request(self) -> tuple[ActivePiece | None, Request | None]:
+    def requests(self):
+        if not self.protocol:
+            return 0
+        return self.protocol.requests()
+
+    def is_chocked(self):
+        if not self.protocol:
+            return False
+        if not self.protocol.is_ok():
+            return False
+        return self.protocol.get_flags().am_choked
+
+    def _grab_request(self) -> Request | None:
         if not self.protocol.can_perform_request():
-            return None, None
+            return None
         for active_piece in self.active_pieces:
             if not self.protocol.has_piece(active_piece.piece_info.index):
                 continue
             if not (request := active_piece.get_request()):
                 continue
-            return active_piece, request
-        return None, None
+            return request
+        return None
 
     def send(self, msg: Message):
         if self.protocol:
@@ -72,45 +86,41 @@ class Peer:
             return
 
         # send handshake and bitfield
-        self.protocol.send(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id))
+        reserved = bytearray(int(0).to_bytes(8))
+        reserved[5] = 0x10
+        self.protocol.send(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id, reserved=reserved))
         self.protocol.send(bitfield)
 
         # wait for handshake and terminate if timeout occurs
-        if not await utils.run_with_timeout(self.protocol.wait_for_handshake(), 10.0):
+        if not await utils.run_with_timeout(self.protocol.wait_for_handshake(), Timeouts.Handshake):
             self.protocol.close_transport()
 
+        response_tasks: set[Task] = set()
         # while transport is open keep communicating
         while self.protocol.is_ok():
             # check whether a Keepalive msg should be sent
             self.protocol.send_keepalive_if_necessary()
 
             # we can send requests only if unchoke is received
-            if not await utils.run_with_timeout(self.protocol.wait_for_unchoke(), 10.0):
+            if not await utils.run_with_timeout(self.protocol.wait_for_unchoke(), Timeouts.Unchoke):
                 continue
 
             # now that we can make requests grab a request along with the active piece
-            active_piece, request = self._grab_active_piece_and_request()
-            if not active_piece or not request:
-                # now there is no request that this peer can serve
-                # "punish" this peer by sleeping for a few seconds
-                await asyncio.sleep(1.0)
+            request = self._grab_request()
+            if not request:
+                if not response_tasks:
+                    await asyncio.sleep(Timeouts.Punish_queue)
+                else:
+                    done, response_tasks = await asyncio.wait(response_tasks, return_when=asyncio.FIRST_COMPLETED)
+                    if any(not completed.result() for completed in done):
+                        await asyncio.sleep(Timeouts.Punish_request)
                 continue
 
             # at this point we have grabbed a request and we should send it
             self.protocol.send(request)
+            response_tasks.add(
+                asyncio.create_task(self.protocol.wait_for_response(request, Timeouts.Request))
+            )
 
-            # wait till request is responded
-            if await utils.run_with_timeout(self.protocol.wait_for_response(), 10.0):
-                # if we have a valid response update the queue inside active piece
-                active_piece.request_done()
-            else:
-                # request timed-out
-                # send a cancel message for the previously sent request
-                self.protocol.cancel_active_request()
-                # put request back in the queue
-                active_piece.put_request_back(request)
-                print(f"{self} - Request timed out")
-                # "punish" this peer by sleeping for a few seconds
-                await asyncio.sleep(10.0)
-        await self.protocol.wait_for_connection_lost()
-        print(f'{self} - Goodbye')
+        self.protocol = None
+        # print(f'{self} - Goodbye')

@@ -9,7 +9,7 @@ class Message:
     def __str__(self) -> str:
         members = [(attr, getattr(self, attr)) for attr in dir(self)
                    if not callable(getattr(self, attr))
-                   and not isinstance(getattr(self, attr), (bytes, bytearray))
+                   and isinstance(getattr(self, attr), (int, str, float))
                    and not attr.startswith("__")]
         return f'{type(self).__name__} - {members}'
 

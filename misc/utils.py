@@ -1,9 +1,10 @@
 import asyncio
 import hashlib
-from typing import Coroutine, Callable
+from typing import Coroutine
 
 from messages import Message, Choke, Unchoke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel, \
     Unknown, Keepalive
+from messages.extended import Extended
 from messages.ids import IDs
 
 
@@ -29,17 +30,20 @@ def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
         case IDs.bitfield.value:
             return Bitfield(bitfield=bytes(data))
         case IDs.request.value:
-            return Request(index=int.from_bytes(data[0:4]),
+            return Request(index=int.from_bytes(data[:4]),
                            begin=int.from_bytes(data[4:8]),
                            data_length=int.from_bytes(data[8:12]))
         case IDs.piece.value:
-            return Piece(index=int.from_bytes(data[0:4]),
+            return Piece(index=int.from_bytes(data[:4]),
                          begin=int.from_bytes(data[4:8]),
                          block=bytes(data[8:]))
         case IDs.cancel.value:
-            return Cancel(index=int.from_bytes(data[0:4]),
+            return Cancel(index=int.from_bytes(data[:4]),
                           begin=int.from_bytes(data[4:8]),
                           data_length=int.from_bytes(data[8:13]))
+        case IDs.extended.value:
+            return Extended(int.from_bytes(data[:1]),
+                            data=bytes(data[1:]))
         case _:
             return Unknown(msg_id, bytes(data))
 

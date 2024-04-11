@@ -1,6 +1,5 @@
 import asyncio
 import os
-import socket
 import ssl
 import urllib.parse
 
