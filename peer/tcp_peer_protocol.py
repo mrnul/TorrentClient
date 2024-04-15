@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import math
 import time
 from asyncio import Transport, Event
@@ -21,18 +22,22 @@ class TcpPeerProtocol(asyncio.Protocol):
     right after a connection is established
     """
 
-    def __init__(self, torrent_info: TorrentInfo, file_handler: FileHandler):
+    def __init__(self, torrent_info: TorrentInfo, file_handler: FileHandler, name: str | None = None):
         self._handshake_event: Event = asyncio.Event()
         self._unchoke_received: Event = asyncio.Event()
         self._requests: list[Request] = []
 
         self._transport: Transport | None = None
         self._flags = Flags()
+        self._name = name
         self._torrent_info: TorrentInfo = torrent_info
         self._file_handler = file_handler
         self._last_tx_time = 0.0
         self._bitfield: Bitfield = Bitfield(bytes(math.ceil(len(self._torrent_info.pieces_info) / 8)))
         self._buffer: bytearray = bytearray()
+
+    def __repr__(self):
+        return self._name if self._name else "<Empty>"
 
     def send_keepalive_if_necessary(self):
         if time.time() - self._last_tx_time >= Timeouts.Keep_alive:
@@ -50,7 +55,7 @@ class TcpPeerProtocol(asyncio.Protocol):
                 and self.is_ok()
         )
 
-    def requests(self):
+    def request_count(self):
         return len(self._requests)
 
     def _find_matching_request(self, piece: Piece) -> Request | None:
@@ -65,6 +70,7 @@ class TcpPeerProtocol(asyncio.Protocol):
     def send(self, msg: Message):
         if not self.is_ok():
             return
+        print(f"    Send: {msg} - {self} - {datetime.datetime.now()}")
         if isinstance(msg, Interested):
             self._flags.am_interested = True
         elif isinstance(msg, NotInterested):
@@ -88,11 +94,13 @@ class TcpPeerProtocol(asyncio.Protocol):
             async with asyncio.timeout(timeout):
                 await request.completed.wait()
         except (Exception,):
-            request.mark_as_not_complete()
+            request.completed.clear()
+            request.put_request_back()
             self.send(Cancel(request.index, request.begin, request.data_length))
         finally:
             if request in self._requests:
                 self._requests.remove(request)
+        request.active_piece.request_done()
         return request.completed.is_set()
 
     def connection_made(self, transport: Transport):
@@ -124,6 +132,7 @@ class TcpPeerProtocol(asyncio.Protocol):
         msg = utils.buffer_to_msg(self._buffer)
         if not msg:
             return None
+        print(f"        Recv: {msg} - {self} - {datetime.datetime.now()}")
         if isinstance(msg, Unchoke):
             self._unchoke_received.set()
             self._flags.am_choked = False
@@ -153,7 +162,7 @@ class TcpPeerProtocol(asyncio.Protocol):
             request = self._find_matching_request(msg)
             if request:
                 self._file_handler.write_piece(msg.index, msg.begin, msg.block)
-                request.mark_as_complete()
+                request.completed.set()
         elif isinstance(msg, Extended):
             self.extended_dict = bencdec.decode(msg.data)
 

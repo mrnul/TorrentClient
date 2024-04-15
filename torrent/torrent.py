@@ -14,7 +14,7 @@ class Torrent:
     """
     A class that represent a torrent and handles download/upload sessions
     """
-    __PROGRESS_TIMEOUT__ = 10.0
+    __PROGRESS_TIMEOUT__ = 2.0
 
     def __init__(self, torrent_info: TorrentInfo, max_active_pieces: int = 0):
         self.torrent_info = torrent_info
@@ -22,13 +22,13 @@ class Torrent:
         self.peers: set[Peer] = set()
         self.peer_tasks: set[Task] = set()
         self.tracker_tasks: set[Task] = set()
-        self.piece_tasks: set[Task] = set()
         self.piece_count: int = len(self.torrent_info.pieces_info)
         self.completed_pieces: list[int] = self.file_handler.get_completed_pieces()
         self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.completed_pieces))
         self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.completed_pieces, self.piece_count)
         self.max_active_pieces: int = max_active_pieces if max_active_pieces else len(self.pending_pieces)
         self.active_pieces: list[ActivePiece] = []
+        self._stop = False
 
     async def _tracker_job(self, tracker: str):
         """
@@ -38,16 +38,17 @@ class Torrent:
             peers, interval = await Tracker(tracker, self.torrent_info).request_peers()
             for p_i in peers:
                 peer = Peer(p_i, self.torrent_info, self.file_handler, self.active_pieces)
-                if peer not in self.peers:
-                    self.peers.add(peer)
-                    self.peer_tasks.add(
-                        asyncio.create_task(
-                            peer.run(self.bitfield),
-                            name=f'Peer {peer.peer_info.ip}'
-                        )
+                if peer in self.peers:
+                    continue
+                self.peers.add(peer)
+                self.peer_tasks.add(
+                    asyncio.create_task(
+                        peer.run(self.bitfield),
+                        name=f'Peer {peer.peer_info.ip}'
                     )
-            if interval < 10:
-                interval = 10
+                )
+            if interval < 60:
+                interval = 60
             await asyncio.sleep(interval)
 
     def _begin_trackers(self):
@@ -106,14 +107,15 @@ class Torrent:
         print(f'Hash error: {piece.piece_info.index}')
         self.pending_pieces.append(piece.piece_info.index)
 
-    def _update_active_pieces(self):
+    def _update_active_pieces_and_get_piece_tasks(self) -> set[Task]:
         """
         Ensures that active piece list has at most max_active_pieces elements
         Creates new actives pieces if necessary and their appropriate piece_tasks to await on request queue
         """
+        new_piece_tasks = set()
         active_pieces_count = len(self.active_pieces)
         if active_pieces_count >= self.max_active_pieces:
-            return
+            return new_piece_tasks
         pieces_to_create = min(self.max_active_pieces - active_pieces_count, len(self.pending_pieces))
         for _ in range(pieces_to_create):
             piece_index = self._choose_pending_piece()
@@ -123,49 +125,53 @@ class Torrent:
             new_active_piece = ActivePiece(piece_index)
             new_active_piece.set(piece_info)
             self.active_pieces.append(new_active_piece)
-            self.piece_tasks.add(
+            new_piece_tasks.add(
                 asyncio.create_task(new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.uid}")
             )
+        return new_piece_tasks
 
     async def download(self):
         """
-        Initializes active pieces, begins trackers and runs until all pieces are completed
+        Begins trackers, creates and awaits on piece_tasks if any, enters simple seed mode if all pieces are complete
         """
         print(f'Loaded: {len(self.completed_pieces)} / {self.piece_count}')
-        # initialize ActivePiece structures
-        self._update_active_pieces()
         self._begin_trackers()
 
-        # loop as long as there are pieces that are not completed
-        while len(self.completed_pieces) != self.piece_count:
-            try:
+        # loop "forever"
+        piece_tasks: set[Task] = set()
+        while not self._stop:
+            # create and get new piece_tasks if necessary
+            piece_tasks |= self._update_active_pieces_and_get_piece_tasks()
+            if not piece_tasks:
+                # simple seed mode since all pieces are received
+                print(f"{self.torrent_info.torrent_file} - Seeding...")
+                await asyncio.sleep(self.__PROGRESS_TIMEOUT__)
+            else:
                 # wait for at least one queue to join
-                done, self.piece_tasks = await asyncio.wait(
-                    self.piece_tasks,
+                print(f"Active pieces count: {len(self.active_pieces)}")
+                done, piece_tasks = await asyncio.wait(
+                    piece_tasks,
                     return_when=asyncio.FIRST_COMPLETED,
                     timeout=self.__PROGRESS_TIMEOUT__
                 )
+                # for each completed piece read written data and check hash value
                 for done_piece in done:
                     result: ActivePiece = done_piece.result()
                     piece_info: PieceInfo = result.piece_info
-
                     data = self.file_handler.read_piece(piece_info.index, 0, piece_info.length).block
                     if result.is_hash_ok(data):
                         self._handle_completed_piece(result)
                     else:
                         self._handle_hash_error(result)
-                    self._update_active_pieces()
-                    print(f"Active pieces count: {len(self.active_pieces)}")
-            except TimeoutError:
-                pass
+            # we can remove done peer tasks from the set
             await self._cleanup_tasks(self.peer_tasks)
 
             print(
                 f'Progress {len(self.completed_pieces)} / {self.piece_count} | '
-                f'{len(self.peer_tasks)} connected peers | '
-                f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers\r\n'
+                f'{len(self.peer_tasks)} running peers | '
+                f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers | '
+                f'{sum(1 for peer in self.peers if peer.am_interesting() > 0)} interested peers\r\n'
             )
-        print(f'Torrent {self.torrent_info.torrent_file} downloaded!')
 
     async def terminate(self):
         """
@@ -175,6 +181,5 @@ class Torrent:
         """
 
         await self._cancel_tasks(self.tracker_tasks)
-        await self._cancel_tasks(self.piece_tasks)
         await self._cancel_tasks(self.peer_tasks)
         print(f'Torrent {self.torrent_info.torrent_file} terminated!')

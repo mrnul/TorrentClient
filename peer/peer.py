@@ -36,17 +36,18 @@ class Peer:
     def __hash__(self) -> int:
         return hash(self.peer_info)
 
-    def requests(self):
+    def requests(self) -> int:
+        """
+        Gets the number of requests that are sent and not yet responded
+        """
         if not self.protocol:
             return 0
-        return self.protocol.requests()
+        return self.protocol.request_count()
 
-    def is_chocked(self):
+    def am_interesting(self) -> bool:
         if not self.protocol:
             return False
-        if not self.protocol.is_ok():
-            return False
-        return self.protocol.get_flags().am_choked
+        return self.protocol.get_flags().am_interesting
 
     def _grab_request(self) -> Request | None:
         if not self.protocol.can_perform_request():
@@ -69,6 +70,7 @@ class Peer:
                 protocol_factory=lambda: TcpPeerProtocol(
                     self.torrent_info,
                     self.file_handler,
+                    name=f"{self}"
                 ),
                 host=self.peer_info.ip,
                 port=self.peer_info.port,
@@ -87,7 +89,7 @@ class Peer:
 
         # send handshake and bitfield
         reserved = bytearray(int(0).to_bytes(8))
-        reserved[5] = 0x10
+        reserved[5] = 0x10  # extended message protocol
         self.protocol.send(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id, reserved=reserved))
         self.protocol.send(bitfield)
 
@@ -109,18 +111,22 @@ class Peer:
             request = self._grab_request()
             if not request:
                 if not response_tasks:
+                    # at this point no new request and nothing to wait for
                     await asyncio.sleep(Timeouts.Punish_queue)
                 else:
+                    # at this point no new request, but we are waiting for some responses
                     done, response_tasks = await asyncio.wait(response_tasks, return_when=asyncio.FIRST_COMPLETED)
                     if any(not completed.result() for completed in done):
+                        # if there is at least one request that was not fulfilled then punish by sleeping
                         await asyncio.sleep(Timeouts.Punish_request)
                 continue
 
             # at this point we have grabbed a request and we should send it
             self.protocol.send(request)
+            # create the tasks that will await for the response
             response_tasks.add(
                 asyncio.create_task(self.protocol.wait_for_response(request, Timeouts.Request))
             )
 
         self.protocol = None
-        # print(f'{self} - Goodbye')
+        print(f'{self} - Goodbye')

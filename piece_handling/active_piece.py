@@ -63,7 +63,6 @@ class ActivePiece:
         if request.index != self.piece_info.index:
             return False
         self._requests.put_nowait(request)
-        self._requests.task_done()
         return True
 
     def request_done(self):

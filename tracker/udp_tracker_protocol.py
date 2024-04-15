@@ -73,9 +73,11 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
         self._handle_rxed_data(data)
 
     def error_received(self, exc: Exception):
+        self.logger.info(f'error_received: {exc}')
         self.transport.close()
 
     def connection_lost(self, exc: Exception | None):
+        self.logger.info(f'connection_lost error: {exc}')
         self.transport.close()
 
     async def finish(self):

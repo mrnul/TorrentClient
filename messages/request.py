@@ -15,12 +15,7 @@ class Request(Message):
         self.active_piece = active_piece
         self.completed: Event = asyncio.Event()
 
-    def mark_as_complete(self):
-        self.completed.set()
-        self.active_piece.request_done()
-
-    def mark_as_not_complete(self):
-        self.completed.clear()
+    def put_request_back(self):
         self.active_piece.put_request_back(self)
 
     def to_bytes(self) -> bytes:
