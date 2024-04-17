@@ -16,7 +16,8 @@ class Request(Message):
         self.completed: Event = asyncio.Event()
 
     def put_request_back(self):
-        self.active_piece.put_request_back(self)
+        if self.active_piece:
+            self.active_piece.put_request_back(self)
 
     def to_bytes(self) -> bytes:
         return struct.pack('>IBIII', self.message_length, self.id, self.index, self.begin, self.data_length)

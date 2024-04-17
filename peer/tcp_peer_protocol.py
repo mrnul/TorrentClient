@@ -2,7 +2,7 @@ import asyncio
 import datetime
 import math
 import time
-from asyncio import Transport, Event
+from asyncio import Transport, Task
 
 import bencdec
 from file_handling.file_handler import FileHandler
@@ -10,7 +10,7 @@ from messages import Message, Handshake, Interested, NotInterested, Bitfield, Ha
     Request, Unchoke, Choke, Piece, Unknown, Keepalive, Cancel
 from messages.extended import Extended
 from misc import utils
-from peer.flags import Flags
+from peer.status_events import StatusEvents
 from peer.timeouts import Timeouts
 from torrent.torrent_info import TorrentInfo
 
@@ -23,12 +23,9 @@ class TcpPeerProtocol(asyncio.Protocol):
     """
 
     def __init__(self, torrent_info: TorrentInfo, file_handler: FileHandler, name: str | None = None):
-        self._handshake_event: Event = asyncio.Event()
-        self._unchoke_received: Event = asyncio.Event()
-        self._requests: list[Request] = []
-
+        self._requests: set[Request] = set()
         self._transport: Transport | None = None
-        self._flags = Flags()
+        self._status = StatusEvents()
         self._name = name
         self._torrent_info: TorrentInfo = torrent_info
         self._file_handler = file_handler
@@ -48,11 +45,9 @@ class TcpPeerProtocol(asyncio.Protocol):
         Checks if it is ok to send a request to the peer
         """
         return (
-                self._flags.am_interested
-                and not self._flags.am_choked
-                and self._handshake_event.is_set()
+                self._status.ok_for_request()
                 and len(self._requests) < 8
-                and self.is_ok()
+                and self.not_closing()
         )
 
     def request_count(self):
@@ -64,44 +59,57 @@ class TcpPeerProtocol(asyncio.Protocol):
                 return req
         return None
 
-    def get_flags(self):
-        return self._flags
-
-    def send(self, msg: Message):
-        if not self.is_ok():
-            return
-        print(f"    Send: {msg} - {self} - {datetime.datetime.now()}")
-        if isinstance(msg, Interested):
-            self._flags.am_interested = True
-        elif isinstance(msg, NotInterested):
-            self._flags.am_interested = False
-        if isinstance(msg, Choke):
-            if self._flags.am_choking:
-                return
-            self._flags.am_choking = True
-        elif isinstance(msg, Unchoke):
-            if not self._flags.am_choking:
-                return
-            self._flags.am_choking = False
-        elif isinstance(msg, Request):
-            self._requests.append(msg)
-
-        self._transport.write(msg.to_bytes())
-        self._last_tx_time = time.time()
-
-    async def wait_for_response(self, request: Request, timeout: float) -> bool:
+    async def _wait_for_response(self, request: Request, timeout: float) -> bool:
         try:
             async with asyncio.timeout(timeout):
                 await request.completed.wait()
-        except (Exception,):
+        except Exception as e:
             request.completed.clear()
             request.put_request_back()
-            self.send(Cancel(request.index, request.begin, request.data_length))
+            if isinstance(e, TimeoutError):
+                self.send(Cancel(request.index, request.begin, request.data_length))
+            else:
+                print(f"Exception: {e} - {self} - {datetime.datetime.now()}")
         finally:
             if request in self._requests:
                 self._requests.remove(request)
-        request.active_piece.request_done()
-        return request.completed.is_set()
+            request.active_piece.request_done()
+            return request.completed.is_set()
+
+    def perform_request(self, request: Request, timeout: float) -> Task:
+        """
+        Sends a request, creates a task that waits for the response
+        Returns the task to be awaited
+        The task is created whether the request has been sent or not and must be awaited
+        The result of the task is True if request was responded and False otherwise
+        Request object is properly updated / handled in either case
+        """
+        self.send(request)
+        return asyncio.create_task(self._wait_for_response(request, timeout))
+
+    def send(self, msg: Message) -> bool:
+        """
+        Sends a message to the peer
+        Request messages are also added in self._requests set (one should use perform_request to send requests)
+        Return True on success False otherwise
+        """
+        if not self.not_closing():
+            return False
+        if isinstance(msg, Interested):
+            self._status.am_interested.set()
+        elif isinstance(msg, NotInterested):
+            self._status.am_interested.clear()
+        if isinstance(msg, Choke):
+            self._status.am_not_choking.clear()
+        elif isinstance(msg, Unchoke):
+            self._status.am_not_choking.set()
+        elif isinstance(msg, Request):
+            self._requests.add(msg)
+
+        self._transport.write(msg.to_bytes())
+        self._last_tx_time = time.time()
+        print(f"{self} - Send - {msg} - {datetime.datetime.now()}")
+        return True
 
     def connection_made(self, transport: Transport):
         self._transport = transport
@@ -123,28 +131,25 @@ class TcpPeerProtocol(asyncio.Protocol):
         del self._buffer[:20]
         peer_id = self._buffer[:20]
         del self._buffer[:20]
-        self._handshake_event.set()
+        self._status.handshake.set()
         return Handshake(info_hash, peer_id, pstr, reserved)
 
     def _consume_buffer(self) -> Message | None:
-        if not self._handshake_event.is_set():
+        if not self._status.handshake.is_set():
             return self._consume_handshake()
         msg = utils.buffer_to_msg(self._buffer)
         if not msg:
             return None
-        print(f"        Recv: {msg} - {self} - {datetime.datetime.now()}")
         if isinstance(msg, Unchoke):
-            self._unchoke_received.set()
-            self._flags.am_choked = False
+            self._status.am_not_choked.set()
             self.send(Unchoke())
         elif isinstance(msg, Choke):
-            self._unchoke_received.clear()
-            self._flags.am_choked = True
+            self._status.am_not_choked.clear()
             self.send(Choke())
         elif isinstance(msg, Interested):
-            self._flags.am_interesting = True
+            self._status.am_interesting.set()
         elif isinstance(msg, NotInterested):
-            self._flags.am_interesting = False  # lol
+            self._status.am_interesting.clear()  # lol
         elif isinstance(msg, Bitfield):
             if self._bitfield.message_length != msg.message_length:
                 self.close_transport()
@@ -166,6 +171,7 @@ class TcpPeerProtocol(asyncio.Protocol):
         elif isinstance(msg, Extended):
             self.extended_dict = bencdec.decode(msg.data)
 
+        # +4 for the first 4 bytes which hold the message length
         bytes_to_remove_from_buffer = msg.message_length + 4
         del self._buffer[0:bytes_to_remove_from_buffer]
         return msg
@@ -173,19 +179,19 @@ class TcpPeerProtocol(asyncio.Protocol):
     def has_piece(self, index: int):
         return self._bitfield.get_bit_value(index)
 
-    def is_ok(self):
+    def not_closing(self):
         return not self._transport.is_closing()
 
     async def wait_for_unchoke(self):
-        await self._unchoke_received.wait()
+        await self._status.am_not_choked.wait()
 
     async def wait_for_handshake(self):
-        await self._handshake_event.wait()
+        await self._status.handshake.wait()
 
     def close_transport(self):
         self._transport.close()
 
     def data_received(self, data: bytes):
         self._buffer += data
-        while self._consume_buffer():
-            pass
+        while m := self._consume_buffer():
+            print(f"{self} - Recv - {m} - {datetime.datetime.now()}")

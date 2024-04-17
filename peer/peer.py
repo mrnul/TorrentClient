@@ -44,11 +44,6 @@ class Peer:
             return 0
         return self.protocol.request_count()
 
-    def am_interesting(self) -> bool:
-        if not self.protocol:
-            return False
-        return self.protocol.get_flags().am_interesting
-
     def _grab_request(self) -> Request | None:
         if not self.protocol.can_perform_request():
             return None
@@ -99,7 +94,7 @@ class Peer:
 
         response_tasks: set[Task] = set()
         # while transport is open keep communicating
-        while self.protocol.is_ok():
+        while self.protocol.not_closing():
             # check whether a Keepalive msg should be sent
             self.protocol.send_keepalive_if_necessary()
 
@@ -121,12 +116,9 @@ class Peer:
                         await asyncio.sleep(Timeouts.Punish_request)
                 continue
 
-            # at this point we have grabbed a request and we should send it
-            self.protocol.send(request)
-            # create the tasks that will await for the response
-            response_tasks.add(
-                asyncio.create_task(self.protocol.wait_for_response(request, Timeouts.Request))
-            )
+            # at this point we have grabbed a request, and we should send it
+            # add the tasks that will await for the response
+            response_tasks.add(self.protocol.perform_request(request, Timeouts.Request))
 
         self.protocol = None
         print(f'{self} - Goodbye')

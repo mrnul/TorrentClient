@@ -4,6 +4,7 @@ from asyncio import Task
 from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
 from peer import Peer
+from peer.timeouts import Timeouts
 from piece_handling.active_piece import ActivePiece
 from piece_handling.piece_info import PieceInfo
 from torrent.torrent_info import TorrentInfo
@@ -14,8 +15,6 @@ class Torrent:
     """
     A class that represent a torrent and handles download/upload sessions
     """
-    __PROGRESS_TIMEOUT__ = 2.0
-
     def __init__(self, torrent_info: TorrentInfo, max_active_pieces: int = 0):
         self.torrent_info = torrent_info
         self.file_handler = FileHandler(self.torrent_info)
@@ -145,14 +144,14 @@ class Torrent:
             if not piece_tasks:
                 # simple seed mode since all pieces are received
                 print(f"{self.torrent_info.torrent_file} - Seeding...")
-                await asyncio.sleep(self.__PROGRESS_TIMEOUT__)
+                await asyncio.sleep(Timeouts.Progress)
             else:
                 # wait for at least one queue to join
                 print(f"Active pieces count: {len(self.active_pieces)}")
                 done, piece_tasks = await asyncio.wait(
                     piece_tasks,
                     return_when=asyncio.FIRST_COMPLETED,
-                    timeout=self.__PROGRESS_TIMEOUT__
+                    timeout=Timeouts.Progress
                 )
                 # for each completed piece read written data and check hash value
                 for done_piece in done:
@@ -169,8 +168,7 @@ class Torrent:
             print(
                 f'Progress {len(self.completed_pieces)} / {self.piece_count} | '
                 f'{len(self.peer_tasks)} running peers | '
-                f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers | '
-                f'{sum(1 for peer in self.peers if peer.am_interesting() > 0)} interested peers\r\n'
+                f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers\r\n'
             )
 
     async def terminate(self):
