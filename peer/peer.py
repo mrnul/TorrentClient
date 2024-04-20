@@ -2,12 +2,13 @@ import asyncio
 from asyncio import Task
 
 from file_handling.file_handler import FileHandler
-from messages import Bitfield, Message, Handshake, Request
+from messages import Bitfield, Message, Handshake
 from misc import utils
 from peer.peer_info import PeerInfo
 from peer.tcp_peer_protocol import TcpPeerProtocol
 from peer.timeouts import Timeouts
 from piece_handling.active_piece import ActivePiece
+from piece_handling.active_request import ActiveRequest
 from torrent.torrent_info import TorrentInfo
 
 
@@ -44,7 +45,7 @@ class Peer:
             return 0
         return self.protocol.request_count()
 
-    def _grab_request(self) -> Request | None:
+    def _grab_request(self) -> ActiveRequest | None:
         if not self.protocol.can_perform_request():
             return None
         for active_piece in self.active_pieces:
@@ -52,7 +53,7 @@ class Peer:
                 continue
             if not (request := active_piece.get_request()):
                 continue
-            return request
+            return ActiveRequest(active_piece, request)
         return None
 
     def send(self, msg: Message):
@@ -103,8 +104,8 @@ class Peer:
                 continue
 
             # now that we can make requests grab a request along with the active piece
-            request = self._grab_request()
-            if not request:
+            active_request: ActiveRequest = self._grab_request()
+            if not active_request:
                 if not response_tasks:
                     # at this point no new request and nothing to wait for
                     await asyncio.sleep(Timeouts.Punish_queue)
@@ -118,7 +119,7 @@ class Peer:
 
             # at this point we have grabbed a request, and we should send it
             # add the tasks that will await for the response
-            response_tasks.add(self.protocol.perform_request(request, Timeouts.Request))
+            response_tasks.add(self.protocol.perform_request(active_request, Timeouts.Request))
 
         self.protocol = None
         print(f'{self} - Goodbye')

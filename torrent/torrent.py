@@ -15,7 +15,7 @@ class Torrent:
     """
     A class that represent a torrent and handles download/upload sessions
     """
-    def __init__(self, torrent_info: TorrentInfo, max_active_pieces: int = 0):
+    def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
         self.file_handler = FileHandler(self.torrent_info)
         self.peers: set[Peer] = set()
@@ -25,7 +25,11 @@ class Torrent:
         self.completed_pieces: list[int] = self.file_handler.get_completed_pieces()
         self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.completed_pieces))
         self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.completed_pieces, self.piece_count)
-        self.max_active_pieces: int = max_active_pieces if max_active_pieces else len(self.pending_pieces)
+        self.max_active_pieces: int = (
+            self.torrent_info.max_active_pieces
+            if self.torrent_info.max_active_pieces
+            else len(self.pending_pieces)
+        )
         self.active_pieces: list[ActivePiece] = []
         self._stop = False
 
@@ -121,8 +125,7 @@ class Torrent:
             if piece_index is None:
                 continue
             piece_info = self.torrent_info.pieces_info[piece_index]
-            new_active_piece = ActivePiece(piece_index)
-            new_active_piece.set(piece_info)
+            new_active_piece = ActivePiece(piece_index, piece_info, self.torrent_info.max_request_length)
             self.active_pieces.append(new_active_piece)
             new_piece_tasks.add(
                 asyncio.create_task(new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.uid}")

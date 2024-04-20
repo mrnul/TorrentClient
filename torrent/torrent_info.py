@@ -9,7 +9,9 @@ class TorrentInfo:
     """
     Class to parse torrent file and hold info in a convenient way
     """
-    def __init__(self, torrent_file: str, port: int, self_id: bytes):
+
+    def __init__(self, torrent_file: str, port: int, self_id: bytes, max_request_length: int = 2 ** 14,
+                 max_active_pieces: int = 0):
         torrent_decoded_data = self._decode_torrent_file(torrent_file)
         self.torrent_file: str = torrent_file
         self.trackers: set[str] = self._parse_trackers(torrent_decoded_data)
@@ -20,6 +22,8 @@ class TorrentInfo:
         self.total_size: int = self._calculate_total_size(torrent_decoded_data)
         self.piece_size = torrent_decoded_data[INFO][PIECE_LENGTH]
         self.pieces_info: tuple[PieceInfo, ...] = self._load_torrent_pieces(torrent_decoded_data, self.total_size)
+        self.max_request_length = max_request_length
+        self.max_active_pieces = max_active_pieces
 
     @staticmethod
     def _build_self_id(self_id: bytes, length: int = 20) -> bytes:

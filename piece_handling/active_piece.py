@@ -9,24 +9,18 @@ class ActivePiece:
     """
     Active piece is a piece that peers can perform requests and download
     """
-    __MAX_REQUEST_LENGTH__ = 2 ** 14
-
-    def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None):
+    def __init__(self, uid: int | None = None, piece_info: PieceInfo | None = None, max_request_length: int = 2 ** 14):
         self.uid: int | None = uid
         self.piece_info: PieceInfo | None = piece_info
         self._requests: asyncio.Queue[Request] | None = None
-        self.set(piece_info)
+        self._max_request_length = max_request_length
+        if self.piece_info is None or self.uid is None:
+            return
+        self._requests = asyncio.Queue()
+        self._build_requests()
 
     def __repr__(self):
         return f"uid: {self.uid} | requests: {self._requests.qsize()}"
-
-    def set(self, piece_info: PieceInfo | None):
-        self.piece_info = piece_info
-        if self.piece_info is None or self.uid is None:
-            return
-        if self._requests is None:
-            self._requests = asyncio.Queue()
-        self._build_requests()
 
     def is_hash_ok(self, data: bytes) -> bool:
         return utils.calculate_hash(data) == self.piece_info.hash_value
@@ -39,8 +33,8 @@ class ActivePiece:
         bytes_left = self.piece_info.length
         offset = 0
         while bytes_left:
-            length = min(self.__MAX_REQUEST_LENGTH__, bytes_left)
-            self._requests.put_nowait(Request(self.piece_info.index, offset, length, self))
+            length = min(self._max_request_length, bytes_left)
+            self._requests.put_nowait(Request(self.piece_info.index, offset, length))
             offset += length
             bytes_left -= length
 

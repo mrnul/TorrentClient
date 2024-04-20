@@ -12,6 +12,7 @@ from messages.extended import Extended
 from misc import utils
 from peer.status_events import StatusEvents
 from peer.timeouts import Timeouts
+from piece_handling.active_request import ActiveRequest
 from torrent.torrent_info import TorrentInfo
 
 
@@ -23,7 +24,7 @@ class TcpPeerProtocol(asyncio.Protocol):
     """
 
     def __init__(self, torrent_info: TorrentInfo, file_handler: FileHandler, name: str | None = None):
-        self._requests: set[Request] = set()
+        self._active_requests: set[ActiveRequest] = set()
         self._transport: Transport | None = None
         self._status = StatusEvents()
         self._name = name
@@ -46,37 +47,42 @@ class TcpPeerProtocol(asyncio.Protocol):
         """
         return (
                 self._status.ok_for_request()
-                and len(self._requests) < 8
+                and len(self._active_requests) < 8
                 and self.not_closing()
         )
 
     def request_count(self):
-        return len(self._requests)
+        return len(self._active_requests)
 
-    def _find_matching_request(self, piece: Piece) -> Request | None:
-        for req in self._requests:
+    def _find_matching_request(self, piece: Piece) -> ActiveRequest | None:
+        for req in self._active_requests:
             if piece.index == req.index and piece.begin == req.begin and len(piece.block) == req.data_length:
                 return req
         return None
 
-    async def _wait_for_response(self, request: Request, timeout: float) -> bool:
+    async def _wait_for_response(self, active_request: ActiveRequest, timeout: float) -> bool:
         try:
             async with asyncio.timeout(timeout):
-                await request.completed.wait()
+                await active_request.completed.wait()
         except Exception as e:
-            request.completed.clear()
-            request.put_request_back()
+            active_request.completed.clear()
+            active_request.put_request_back()
             if isinstance(e, TimeoutError):
-                self.send(Cancel(request.index, request.begin, request.data_length))
+                self.send(
+                    Cancel(
+                        active_request.request.index,
+                        active_request.request.begin,
+                        active_request.request.data_length
+                    )
+                )
             else:
                 print(f"Exception: {e} - {self} - {datetime.datetime.now()}")
         finally:
-            if request in self._requests:
-                self._requests.remove(request)
-            request.active_piece.request_done()
-            return request.completed.is_set()
+            self._active_requests.discard(active_request)
+            active_request.request_processed()
+            return active_request.completed.is_set()
 
-    def perform_request(self, request: Request, timeout: float) -> Task:
+    def perform_request(self, active_request: ActiveRequest, timeout: float) -> Task:
         """
         Sends a request, creates a task that waits for the response
         Returns the task to be awaited
@@ -84,8 +90,9 @@ class TcpPeerProtocol(asyncio.Protocol):
         The result of the task is True if request was responded and False otherwise
         Request object is properly updated / handled in either case
         """
-        self.send(request)
-        return asyncio.create_task(self._wait_for_response(request, timeout))
+        if self.send(active_request.request):
+            self._active_requests.add(active_request)
+        return asyncio.create_task(self._wait_for_response(active_request, timeout))
 
     def send(self, msg: Message) -> bool:
         """
@@ -103,8 +110,6 @@ class TcpPeerProtocol(asyncio.Protocol):
             self._status.am_not_choking.clear()
         elif isinstance(msg, Unchoke):
             self._status.am_not_choking.set()
-        elif isinstance(msg, Request):
-            self._requests.add(msg)
 
         self._transport.write(msg.to_bytes())
         self._last_tx_time = time.time()
