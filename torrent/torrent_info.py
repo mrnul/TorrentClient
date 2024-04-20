@@ -19,7 +19,7 @@ class TorrentInfo:
         self.self_port: int = port
         self.self_id: bytes = self._build_self_id(self_id)
         self.files_info: tuple[FileInfo, ...] = self._parse_files(torrent_decoded_data)
-        self.total_size: int = self._calculate_total_size(torrent_decoded_data)
+        self.total_size: int = self.files_info[-1].end_byte_in_torrent + 1
         self.piece_size = torrent_decoded_data[INFO][PIECE_LENGTH]
         self.pieces_info: tuple[PieceInfo, ...] = self._load_torrent_pieces(torrent_decoded_data, self.total_size)
         self.max_request_length = max_request_length
