@@ -66,7 +66,7 @@ class TcpTrackerProtocol(asyncio.Protocol):
         self.logger.info(f'status: {r.status}')
         if r.status == 200:
             raw = r.read()
-            response = bencdec.decode(raw)
+            response = bencdec.decode(raw)[0]
             self.interval = response.get(INTERVAL, 60)
             raw_peers = response[PEERS]
             if isinstance(raw_peers, bytes) and len(raw_peers) % 6 == 0:

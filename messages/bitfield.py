@@ -11,7 +11,7 @@ class Bitfield(Message):
         self.data: bytearray = bytearray(bitfield)
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IB', self.message_length, self.id) + self.data
+        return struct.pack('>IB', self.message_length, self.uid) + self.data
 
     @staticmethod
     def from_completed_pieces(completed_pieces: list[int], piece_count: int):

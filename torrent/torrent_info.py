@@ -42,7 +42,7 @@ class TorrentInfo:
         Decides bencoded torrent data
         """
         with open(torrent_file, mode='rb') as f:
-            return bencdec.decode(f.read())
+            return bencdec.decode(f.read())[0]
 
     @staticmethod
     def _parse_trackers(torrent_decoded_data: dict) -> set[str]:

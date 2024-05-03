@@ -4,7 +4,7 @@ class Message:
     """
     def __init__(self, message_length: int | None, uid: int | None):
         self.message_length = message_length
-        self.id = uid
+        self.uid = uid
 
     def __str__(self) -> str:
         members = [(attr, getattr(self, attr)) for attr in dir(self)
@@ -14,4 +14,4 @@ class Message:
         return f'{type(self).__name__} - {members}'
 
     def to_bytes(self) -> bytes:
-        raise NotImplementedError(f"to_bytes not implemented for msg id {self.id}")
+        raise NotImplementedError(f"to_bytes not implemented for msg id {self.uid}")

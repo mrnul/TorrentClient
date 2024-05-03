@@ -10,4 +10,4 @@ class Extended(Message):
         self.data = data
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IBB', self.message_length, self.id, self.ext_id) + self.data
+        return struct.pack('>IBB', self.message_length, self.uid, self.ext_id) + self.data

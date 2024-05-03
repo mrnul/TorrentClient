@@ -12,4 +12,4 @@ class Piece(Message):
         self.block = block
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IBII', self.message_length, self.id, self.index, self.begin) + self.block
+        return struct.pack('>IBII', self.message_length, self.uid, self.index, self.begin) + self.block

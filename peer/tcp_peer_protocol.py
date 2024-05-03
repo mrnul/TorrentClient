@@ -4,12 +4,12 @@ import math
 import time
 from asyncio import Transport, Task
 
-import bencdec
 from file_handling.file_handler import FileHandler
 from messages import Message, Handshake, Interested, NotInterested, Bitfield, Have, \
     Request, Unchoke, Choke, Piece, Unknown, Keepalive, Cancel
 from messages.extended import Extended
 from misc import utils
+from peer.extended_protocol import ExtendedProtocol
 from peer.status_events import StatusEvents
 from peer.timeouts import Timeouts
 from piece_handling.active_request import ActiveRequest
@@ -33,6 +33,7 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._last_tx_time = 0.0
         self._bitfield: Bitfield = Bitfield(bytes(math.ceil(len(self._torrent_info.pieces_info) / 8)))
         self._buffer: bytearray = bytearray()
+        self._ext: ExtendedProtocol = ExtendedProtocol()
 
     def __repr__(self):
         return self._name if self._name else "<Empty>"
@@ -113,7 +114,6 @@ class TcpPeerProtocol(asyncio.Protocol):
 
         self._transport.write(msg.to_bytes())
         self._last_tx_time = time.time()
-        print(f"{self} - Send - {msg} - {datetime.datetime.now()}")
         return True
 
     def connection_made(self, transport: Transport):
@@ -174,7 +174,9 @@ class TcpPeerProtocol(asyncio.Protocol):
                 self._file_handler.write_piece(msg.index, msg.begin, msg.block)
                 request.completed.set()
         elif isinstance(msg, Extended):
-            self.extended_dict = bencdec.decode(msg.data)
+            self._ext.parse_msg(msg)
+            print(f"{self} - Recv - {msg}: {self._ext.metadata.uid} |"
+                  f" {self._ext.metadata.size} - {datetime.datetime.now()}")
 
         # +4 for the first 4 bytes which hold the message length
         bytes_to_remove_from_buffer = msg.message_length + 4
@@ -198,5 +200,5 @@ class TcpPeerProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes):
         self._buffer += data
-        while m := self._consume_buffer():
-            print(f"{self} - Recv - {m} - {datetime.datetime.now()}")
+        while self._consume_buffer():
+            pass

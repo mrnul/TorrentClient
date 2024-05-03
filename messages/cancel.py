@@ -12,4 +12,4 @@ class Cancel(Message):
         self.data_length = data_length
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IBIII', self.message_length, self.id, self.index, self.begin, self.data_length)
+        return struct.pack('>IBIII', self.message_length, self.uid, self.index, self.begin, self.data_length)
