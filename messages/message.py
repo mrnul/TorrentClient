@@ -2,7 +2,7 @@ class Message:
     """
     Base class for all messages
     """
-    def __init__(self, message_length: int | None, uid: int | None):
+    def __init__(self, message_length: int, uid: int | None):
         self.message_length = message_length
         self.uid = uid
 

@@ -86,7 +86,9 @@ class Peer:
         # send handshake and bitfield
         reserved = bytearray(int(0).to_bytes(8))
         reserved[5] = 0x10  # extended message protocol
-        self.protocol.send(Handshake(self.torrent_info.info_hash, self.torrent_info.self_id, reserved=reserved))
+        self.protocol.send(
+            Handshake(self.torrent_info.metadata.info_hash, self.torrent_info.self_id, reserved=reserved)
+        )
         self.protocol.send(bitfield)
 
         # wait for handshake and terminate if timeout occurs

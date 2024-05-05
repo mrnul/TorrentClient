@@ -19,7 +19,7 @@ class FileHandler:
         Ensures that directories and files in torrent are created and have the correct length
         """
         files: list[File] = []
-        for file in self.torrent_info.files_info:
+        for file in self.torrent_info.metadata.files_info:
             os.makedirs(os.path.dirname(file.path), exist_ok=True)
             if not os.path.exists(file.path):
                 open(file.path, "x").close()
@@ -38,7 +38,7 @@ class FileHandler:
         result: list[int] = []
         try:
             file_index = 0
-            for piece_info in self.torrent_info.pieces_info:
+            for piece_info in self.torrent_info.metadata.pieces_info:
                 bytes_left = piece_info.length
                 data = b''
                 while bytes_left:
@@ -60,7 +60,9 @@ class FileHandler:
         """
         Writes a piece to the appropriate torrent files
         """
-        file_index, offset = self.byte_in_torrent_to_file_and_offset(index * self.torrent_info.piece_size + begin)
+        file_index, offset = self.byte_in_torrent_to_file_and_offset(
+            index * self.torrent_info.metadata.piece_size + begin
+        )
         if file_index is None or offset is None:
             return False
 
@@ -96,7 +98,7 @@ class FileHandler:
         Reads the appropriate piece that can be used as a response to a request
         """
         file_index, offset = self.byte_in_torrent_to_file_and_offset(
-            index * self.torrent_info.piece_size + begin
+            index * self.torrent_info.metadata.piece_size + begin
         )
         if file_index is None or offset is None:
             return None

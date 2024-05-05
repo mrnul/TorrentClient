@@ -26,13 +26,13 @@ class Tracker:
         self.logger = Logger().get(log_file, log_file)
         self.logger.info(f"Initialized tracker {self.tracker} - "
                          f"{torrent_info.torrent_file} - "
-                         f"{self.torrent_info.info_hash.hex()} - "
-                         f"{self.torrent_info.total_size}")
+                         f"{self.torrent_info.metadata.info_hash.hex()} - "
+                         f"{self.torrent_info.metadata.total_size}")
 
     async def _build_udp_transport_and_protocol(self):
         return await asyncio.get_running_loop().create_datagram_endpoint(
             lambda: UdpTrackerProtocol(
-                info_hash=self.torrent_info.info_hash,
+                info_hash=self.torrent_info.metadata.info_hash,
                 self_port=self.torrent_info.self_port,
                 self_id=self.torrent_info.self_id,
                 tracker=self.tracker,
@@ -44,7 +44,7 @@ class Tracker:
     async def _build_tcp_transport_and_protocol_secure(self):
         return await asyncio.get_event_loop().create_connection(
             lambda: TcpTrackerProtocol(
-                info_hash=self.torrent_info.info_hash,
+                info_hash=self.torrent_info.metadata.info_hash,
                 self_port=self.torrent_info.self_port,
                 self_id=self.torrent_info.self_id,
                 tracker=self.tracker,
@@ -59,7 +59,7 @@ class Tracker:
     async def _build_tcp_transport_and_protocol(self):
         return await asyncio.get_event_loop().create_connection(
             lambda: TcpTrackerProtocol(
-                info_hash=self.torrent_info.info_hash,
+                info_hash=self.torrent_info.metadata.info_hash,
                 self_port=self.torrent_info.self_port,
                 self_id=self.torrent_info.self_id,
                 tracker=self.tracker,

@@ -21,7 +21,7 @@ class Torrent:
         self.peers: set[Peer] = set()
         self.peer_tasks: set[Task] = set()
         self.tracker_tasks: set[Task] = set()
-        self.piece_count: int = len(self.torrent_info.pieces_info)
+        self.piece_count: int = len(self.torrent_info.metadata.pieces_info)
         self.completed_pieces: list[int] = self.file_handler.get_completed_pieces()
         self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.completed_pieces))
         self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.completed_pieces, self.piece_count)
@@ -124,7 +124,7 @@ class Torrent:
             piece_index = self._choose_pending_piece()
             if piece_index is None:
                 continue
-            piece_info = self.torrent_info.pieces_info[piece_index]
+            piece_info = self.torrent_info.metadata.pieces_info[piece_index]
             new_active_piece = ActivePiece(piece_index, piece_info, self.torrent_info.max_request_length)
             self.active_pieces.append(new_active_piece)
             new_piece_tasks.add(
