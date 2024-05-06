@@ -8,62 +8,54 @@ from torrent.constants import *
 class Metadata:
     __METADATA_PIECE_SIZE__ = 2 ** 14
 
-    def __init__(self, info_dict: dict, expected_info_hash: bytes = bytes()):
-        self.info_dict: dict = info_dict
+    def __init__(self, decoded_info_data: dict):
+        self.encoded_info_data: bytes | str = bencdec.encode(decoded_info_data)
+        self.expected_info_hash: bytes = utils.calculate_hash(self.encoded_info_data)
+        self.decoded_info_data: dict = {}
         self.files_info: tuple[FileInfo, ...] = tuple()
-        self.total_size: int = 0
+        self.torrent_size: int = 0
         self.piece_size: int = 0
         self.pieces_info: tuple[PieceInfo, ...] = tuple()
-        self.expected_info_hash: bytes = expected_info_hash
-        self.info_hash: bytes | None = None
-        self._load_data()
+        self.info_hash: bytes = bytes()
+        self._validate_data()
 
     def _info_dict_contains_all_needed_fields(self) -> bool:
-        if PIECE_LENGTH not in self.info_dict:
+        if PIECE_LENGTH not in self.decoded_info_data:
             return False
-        if PIECES not in self.info_dict:
+        if PIECES not in self.decoded_info_data:
             return False
-        if NAME not in self.info_dict:
+        if NAME not in self.decoded_info_data:
             return False
-        if FILES not in self.info_dict:
+        if FILES not in self.decoded_info_data:
             return False
-        for file in self.info_dict[FILES]:
+        for file in self.decoded_info_data[FILES]:
             if LENGTH not in file:
                 return False
             if PATH not in file:
                 return False
         return True
 
-    def _load_data(self) -> bool:
+    def _validate_data(self) -> bool:
+        self.decoded_info_data = bencdec.decode(self.encoded_info_data)[0]
         if not self._info_dict_contains_all_needed_fields():
             return False
-        self.info_hash = self._calc_info_sha1_hash()
-        if self.expected_info_hash:
-            if self.info_hash != self.expected_info_hash:
-                return False
-        self.files_info = self._parse_files()
-        self.total_size = self.files_info[-1].end_byte_in_torrent + 1
-        self.piece_size = self.info_dict[PIECE_LENGTH]
-        self.pieces_info = self._load_torrent_pieces()
-        self._encoded_info = bencdec.encode(self.info_dict)
+        self.info_hash = utils.calculate_hash(self.encoded_info_data)
+        if self.info_hash != self.expected_info_hash:
+            return False
+        self._parse_files()
+        self._load_torrent_pieces()
         return True
 
-    def _calc_info_sha1_hash(self) -> bytes:
-        """
-        Takes torrent dictionary as input and returns the sha1 hash bytes
-        """
-        info_encoded_data = bencdec.encode(self.info_dict)
-        return utils.calculate_hash(info_encoded_data)
-
-    def _load_torrent_pieces(self) -> tuple[PieceInfo, ...]:
+    def _load_torrent_pieces(self):
         """
         Get list of PieceInfo for every piece in torrent
         """
-        remaining_size: int = self.total_size
+        self.piece_size = self.decoded_info_data[PIECE_LENGTH]
+        remaining_size: int = self.torrent_size
         piece_info_list: list[PieceInfo] = []
-        if not self.info_dict:
+        if not self.decoded_info_data:
             return tuple()
-        for p, i in enumerate(self.info_dict[PIECES].hex(' ', 20).split(' ')):
+        for p, i in enumerate(self.decoded_info_data[PIECES].hex(' ', 20).split(' ')):
             piece_info_list.append(
                 PieceInfo(
                     bytes.fromhex(i), p,
@@ -71,23 +63,25 @@ class Metadata:
                 )
             )
             remaining_size -= self.piece_size
-        return tuple(piece_info_list)
+        self.pieces_info = tuple(piece_info_list)
+        self.piece_count = len(self.pieces_info)
 
-    def _parse_files(self) -> tuple[FileInfo, ...]:
+    def _parse_files(self):
         """
         Get a list of FileInfo that contain information about files in torrent
         """
         illegal_path_chars = '|:?*<>\"'
         files: list[FileInfo] = []
-        root_dir = f'./{self.info_dict[NAME].decode()}'
+        root_dir = f'./{self.decoded_info_data[NAME].decode()}'
         if len(root_dir) == 0:
             root_dir = '.'
         start_byte = 0
-        for file in self.info_dict[FILES]:
+        for file in self.decoded_info_data[FILES]:
             path = '/'.join([p.decode() for p in file[PATH]])
             path = ''.join(map(lambda x: '_' if x in illegal_path_chars else x, path))
             path = f"{root_dir}/{path}"
             size = int(file[LENGTH])
             files.append(FileInfo(path, size, start_byte, start_byte + size - 1))
             start_byte += size
-        return tuple(files)
+        self.files_info = tuple(files)
+        self.torrent_size = self.files_info[-1].end_byte_in_torrent + 1

@@ -17,19 +17,12 @@ class Torrent:
     """
     def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
-        self.file_handler = FileHandler(self.torrent_info)
+        self.file_handler = FileHandler(self.torrent_info.metadata)
         self.peers: set[Peer] = set()
         self.peer_tasks: set[Task] = set()
         self.tracker_tasks: set[Task] = set()
-        self.piece_count: int = len(self.torrent_info.metadata.pieces_info)
-        self.completed_pieces: list[int] = self.file_handler.get_completed_pieces()
-        self.pending_pieces: list[int] = list(set(range(self.piece_count)) - set(self.completed_pieces))
-        self.bitfield: Bitfield = Bitfield.from_completed_pieces(self.completed_pieces, self.piece_count)
-        self.max_active_pieces: int = (
-            self.torrent_info.max_active_pieces
-            if self.torrent_info.max_active_pieces
-            else len(self.pending_pieces)
-        )
+        self.bitfield: Bitfield = Bitfield()
+        self.max_active_pieces: int = 0
         self.active_pieces: list[ActivePiece] = []
         self._stop = False
 
@@ -65,7 +58,7 @@ class Torrent:
         For now just get the first piece
         """
         try:
-            return self.pending_pieces.pop(0)
+            return self.file_handler.pending_pieces.pop(0)
         except IndexError:
             return None
 
@@ -95,7 +88,7 @@ class Torrent:
         Notifies other peers with Have message
         Removes related active piece from list
         """
-        self.completed_pieces.append(piece.piece_info.index)
+        self.file_handler.completed_pieces.append(piece.piece_info.index)
         self.bitfield.set_bit_value(piece.piece_info.index, True)
         print(f'Piece done: {piece.piece_info.index}')
         for peer in self.peers:
@@ -108,7 +101,7 @@ class Torrent:
         Put that piece back in pending pieces list in order to be downloaded again at some point
         """
         print(f'Hash error: {piece.piece_info.index}')
-        self.pending_pieces.append(piece.piece_info.index)
+        self.file_handler.pending_pieces.append(piece.piece_info.index)
 
     def _update_active_pieces_and_get_piece_tasks(self) -> set[Task]:
         """
@@ -119,7 +112,7 @@ class Torrent:
         active_pieces_count = len(self.active_pieces)
         if active_pieces_count >= self.max_active_pieces:
             return new_piece_tasks
-        pieces_to_create = min(self.max_active_pieces - active_pieces_count, len(self.pending_pieces))
+        pieces_to_create = min(self.max_active_pieces - active_pieces_count, len(self.file_handler.pending_pieces))
         for _ in range(pieces_to_create):
             piece_index = self._choose_pending_piece()
             if piece_index is None:
@@ -132,12 +125,28 @@ class Torrent:
             )
         return new_piece_tasks
 
+    def _on_metadata_completion(self):
+        self.file_handler.on_metadata_completion()
+        self.bitfield.update(self.file_handler.completed_pieces, self.torrent_info.metadata.piece_count)
+        self.max_active_pieces: int = (
+            self.torrent_info.max_active_pieces
+            if self.torrent_info.max_active_pieces
+            else len(self.file_handler.pending_pieces)
+        )
+
     async def download(self):
         """
         Begins trackers, creates and awaits on piece_tasks if any, enters simple seed mode if all pieces are complete
         """
-        print(f'Loaded: {len(self.completed_pieces)} / {self.piece_count}')
+        print(f'Begin trackers')
         self._begin_trackers()
+
+        print(f'Waiting for metadata')
+        # await metadata completion
+
+        print(f'Metadata OK')
+        self._on_metadata_completion()
+        print(f'Loaded: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count}')
 
         # loop "forever"
         piece_tasks: set[Task] = set()
@@ -169,7 +178,7 @@ class Torrent:
             await self._cleanup_tasks(self.peer_tasks)
 
             print(
-                f'Progress {len(self.completed_pieces)} / {self.piece_count} | '
+                f'Progress {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count} | '
                 f'{len(self.peer_tasks)} running peers | '
                 f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers\r\n'
             )

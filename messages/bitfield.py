@@ -6,19 +6,18 @@ from messages.ids import IDs
 
 
 class Bitfield(Message):
-    def __init__(self, bitfield: bytes):
+    def __init__(self, bitfield: bytes = bytes()):
         super().__init__(1 + len(bitfield), IDs.bitfield.value)
         self.data: bytearray = bytearray(bitfield)
 
     def to_bytes(self) -> bytes:
         return struct.pack('>IB', self.message_length, self.uid) + self.data
 
-    @staticmethod
-    def from_completed_pieces(completed_pieces: list[int], piece_count: int):
-        bitfield: Bitfield = Bitfield(bytes(math.ceil(piece_count / 8)))
+    def update(self, completed_pieces: list[int], piece_count: int):
+        self.data = bytearray(math.ceil(piece_count / 8))
+        self.message_length = 1 + len(self.data)
         for piece in completed_pieces:
-            bitfield.set_bit_value(piece, True)
-        return bitfield
+            self.set_bit_value(piece, True)
 
     @staticmethod
     def _get_byte_bit_pair(bit_num: int) -> tuple[int, int]:

@@ -27,7 +27,7 @@ class Tracker:
         self.logger.info(f"Initialized tracker {self.tracker} - "
                          f"{torrent_info.torrent_file} - "
                          f"{self.torrent_info.metadata.info_hash.hex()} - "
-                         f"{self.torrent_info.metadata.total_size}")
+                         f"{self.torrent_info.metadata.torrent_size}")
 
     async def _build_udp_transport_and_protocol(self):
         return await asyncio.get_running_loop().create_datagram_endpoint(
