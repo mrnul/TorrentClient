@@ -5,8 +5,9 @@ from typing import Coroutine
 import bencdec
 from messages import Message, Choke, Unchoke, Interested, NotInterested, Have, Bitfield, Request, Piece, Cancel, \
     Unknown, Keepalive
-from messages.extended import ExtendedMetadataPieceRequest, ExtendedMetadataPieceResponse, ExtendedMetadataPieceReject, \
-    ExtendedHandshake
+from messages.extended import ExtendedHandshake, ExtendedMetadataPieceRequest, ExtendedMetadataPieceResponse, \
+    ExtendedMetadataPieceReject
+from messages.extended.constants import *
 from messages.ids import IDs, ExtMetadataIDs, ExtIDs
 
 
@@ -49,16 +50,16 @@ def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
             message_length = 2 + len(raw_data)
             decoded_data, offset = bencdec.decode(raw_data)
             if ext_id == ExtIDs.handshake.value:
-                metadata_size = decoded_data[b'metadata_size']
+                metadata_size = decoded_data[METADATA_SIZE]
                 metadata_uid = None
-                m: dict[bytes, int] = decoded_data[b'm']
+                m: dict[bytes, int] = decoded_data[M]
                 for key, value in m.items():
                     if b'metadata' in key:
                         metadata_uid = value
                 return ExtendedHandshake(message_length, ext_id, metadata_uid, metadata_size)
             elif ext_id == ExtIDs.metadata.value:
-                message_type = decoded_data[b'message_type']
-                piece = decoded_data[b'piece']
+                message_type = decoded_data[MSG_TYPE]
+                piece = decoded_data[PIECE]
                 if message_type == ExtMetadataIDs.request.value:
                     return ExtendedMetadataPieceRequest(message_length, ext_id, piece)
                 elif message_type == ExtMetadataIDs.data.value:
@@ -66,7 +67,7 @@ def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
                         message_length,
                         ext_id,
                         piece,
-                        decoded_data[b'total_size'],
+                        decoded_data[TOTAL_SIZE],
                         raw_data[offset:])
                 elif message_type == ExtMetadataIDs.reject.value:
                     return ExtendedMetadataPieceReject(message_length, ext_id, piece)

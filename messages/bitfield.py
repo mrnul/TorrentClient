@@ -13,7 +13,7 @@ class Bitfield(Message):
     def to_bytes(self) -> bytes:
         return struct.pack('>IB', self.message_length, self.uid) + self.data
 
-    def update(self, completed_pieces: list[int], piece_count: int):
+    def update_from_completed_pieces(self, completed_pieces: list[int], piece_count: int):
         self.data = bytearray(math.ceil(piece_count / 8))
         self.message_length = 1 + len(self.data)
         for piece in completed_pieces:

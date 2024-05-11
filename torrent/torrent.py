@@ -101,6 +101,7 @@ class Torrent:
         Put that piece back in pending pieces list in order to be downloaded again at some point
         """
         print(f'Hash error: {piece.piece_info.index}')
+        self.active_pieces.remove(piece)
         self.file_handler.pending_pieces.append(piece.piece_info.index)
 
     def _update_active_pieces_and_get_piece_tasks(self) -> set[Task]:
@@ -126,8 +127,12 @@ class Torrent:
         return new_piece_tasks
 
     def _on_metadata_completion(self):
+        print("Handling files...")
         self.file_handler.on_metadata_completion()
-        self.bitfield.update(self.file_handler.completed_pieces, self.torrent_info.metadata.piece_count)
+        print("Files OK")
+        self.bitfield.update_from_completed_pieces(
+            self.file_handler.completed_pieces, self.torrent_info.metadata.piece_count
+        )
         self.max_active_pieces: int = (
             self.torrent_info.max_active_pieces
             if self.torrent_info.max_active_pieces

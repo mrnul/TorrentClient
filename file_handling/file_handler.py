@@ -13,7 +13,7 @@ class FileHandler:
     def __init__(self, metadata: Metadata):
         self.metadata = metadata
         self.files: tuple[File, ...] = tuple()
-        self.completed_pieces = 0
+        self.completed_pieces: list[int] = []
         self.pending_pieces: list[int] = []
 
     def on_metadata_completion(self):
