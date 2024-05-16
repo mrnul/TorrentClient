@@ -1,10 +1,16 @@
 import asyncio
 import os
 import ssl
+import time
 import urllib.parse
+from asyncio import Task, Event
 
+from file_handling.file_handler import FileHandler
 from logger.logger import Logger
+from messages import Bitfield
+from peer import Peer
 from peer.peer_info import PeerInfo
+from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
 from tracker.tcp_tracker_protocol import TcpTrackerProtocol
 from tracker.udp_tracker_protocol import UdpTrackerProtocol
@@ -14,8 +20,11 @@ class Tracker:
     """
     Class to handle tracker tcp and udp protocols
     """
+    __MIN_INTERVAL__ = 60.0
 
     def __init__(self, tracker: str, torrent_info: TorrentInfo):
+        self.last_run: float = 0.0
+        self.wake_up: Event = asyncio.Event()
         self.tracker: str = tracker
         self.torrent_info: TorrentInfo = torrent_info
         self.parsed_url = urllib.parse.urlparse(self.tracker)
@@ -69,7 +78,7 @@ class Tracker:
             port=80,
         )
 
-    async def request_peers(self) -> tuple[set[PeerInfo], int]:
+    async def _request_peers(self) -> tuple[set[PeerInfo], int]:
         scheme = self.parsed_url.scheme.casefold()
         self.logger.info(f"request_peers - {scheme}")
         transport, protocol = None, None
@@ -93,3 +102,33 @@ class Tracker:
             peers, interval = set(), 0
         self.logger.info(f"result: ({len(peers)}, {interval})")
         return peers, interval
+
+    async def tracker_main_job(
+            self, peer_set: set[Peer], peer_tasks: set[Task],
+            torrent_bitfield: Bitfield, file_handler: FileHandler, active_pieces: list[ActivePiece]
+    ):
+        """
+        Tracker jobs run in the background to periodically perform requests, get peer lists and create peer tasks
+        """
+        while True:
+            peers, interval = set(), self.__MIN_INTERVAL__
+            if self.last_run - time.time() > self.__MIN_INTERVAL__:
+                peers, interval = await self._request_peers()
+                for p_i in peers:
+                    peer = Peer(p_i, self.torrent_info, file_handler, active_pieces)
+                    if peer in peer_set:
+                        continue
+                    peer_set.add(peer)
+                    peer_tasks.add(
+                        asyncio.create_task(
+                            peer.run(torrent_bitfield),
+                            name=f'Peer {peer.peer_info.ip}'
+                        )
+                    )
+
+                self.last_run = time.time()
+            if interval < self.__MIN_INTERVAL__:
+                interval = self.__MIN_INTERVAL__
+            await asyncio.wait_for(self.wake_up.wait(), interval)
+            if self.wake_up.is_set():
+                self.wake_up.clear()

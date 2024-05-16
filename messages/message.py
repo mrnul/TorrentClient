@@ -7,7 +7,7 @@ class Message:
         self.uid = uid
 
     def __str__(self) -> str:
-        members = [(attr, getattr(self, attr)) for attr in dir(self)
+        members = [(attr, getattr(self, attr)) for attr in vars(self)
                    if not callable(getattr(self, attr))
                    and isinstance(getattr(self, attr), (int, str, float))
                    and not attr.startswith("__")]

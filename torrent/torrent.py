@@ -15,41 +15,32 @@ class Torrent:
     """
     A class that represent a torrent and handles download/upload sessions
     """
+
     def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
         self.file_handler = FileHandler(self.torrent_info.metadata)
         self.peers: set[Peer] = set()
         self.peer_tasks: set[Task] = set()
+        self.trackers: set[Tracker] = set()
         self.tracker_tasks: set[Task] = set()
         self.bitfield: Bitfield = Bitfield()
         self.max_active_pieces: int = 0
         self.active_pieces: list[ActivePiece] = []
         self._stop = False
 
-    async def _tracker_job(self, tracker: str):
-        """
-        Tracker jobs run in the background to periodically perform requests, get peer lists and create peer tasks
-        """
-        while True:
-            peers, interval = await Tracker(tracker, self.torrent_info).request_peers()
-            for p_i in peers:
-                peer = Peer(p_i, self.torrent_info, self.file_handler, self.active_pieces)
-                if peer in self.peers:
-                    continue
-                self.peers.add(peer)
-                self.peer_tasks.add(
-                    asyncio.create_task(
-                        peer.run(self.bitfield),
-                        name=f'Peer {peer.peer_info.ip}'
-                    )
-                )
-            if interval < 60:
-                interval = 60
-            await asyncio.sleep(interval)
-
     def _begin_trackers(self):
         for tracker in self.torrent_info.trackers:
-            self.tracker_tasks.add(asyncio.create_task(self._tracker_job(tracker), name=f'Tracker {tracker}'))
+            t = Tracker(tracker, self.torrent_info)
+            self.tracker_tasks.add(asyncio.create_task(
+                t.tracker_main_job(
+                    self.peers,
+                    self.peer_tasks,
+                    self.bitfield,
+                    self.file_handler,
+                    self.active_pieces
+                ), name=f'Tracker {tracker}')
+            )
+            self.trackers.add(t)
 
     def _choose_pending_piece(self) -> int | None:
         """
@@ -139,11 +130,10 @@ class Torrent:
             else len(self.file_handler.pending_pieces)
         )
 
-    async def download(self):
+    async def start(self):
         """
         Begins trackers, creates and awaits on piece_tasks if any, enters simple seed mode if all pieces are complete
         """
-        print(f'Begin trackers')
         self._begin_trackers()
 
         print(f'Waiting for metadata')
@@ -164,7 +154,6 @@ class Torrent:
                 await asyncio.sleep(Timeouts.Progress)
             else:
                 # wait for at least one queue to join
-                print(f"Active pieces count: {len(self.active_pieces)}")
                 done, piece_tasks = await asyncio.wait(
                     piece_tasks,
                     return_when=asyncio.FIRST_COMPLETED,
@@ -182,19 +171,18 @@ class Torrent:
             # we can remove done peer tasks from the set
             await self._cleanup_tasks(self.peer_tasks)
 
+            peer_count = len(self.peer_tasks)
+            active_peers = sum(1 for peer in self.peers if peer.requests() > 0)
+            print(f"Active pieces count: {len(self.active_pieces)}")
             print(
                 f'Progress {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count} | '
-                f'{len(self.peer_tasks)} running peers | '
-                f'{sum(1 for peer in self.peers if peer.requests() > 0)} active peers\r\n'
+                f'{peer_count} running peers | '
+                f'{active_peers} active peers\r\n'
             )
-
-    async def terminate(self):
-        """
-        Performs cleanup
-
-        I don't think it works properly
-        """
 
         await self._cancel_tasks(self.tracker_tasks)
         await self._cancel_tasks(self.peer_tasks)
-        print(f'Torrent {self.torrent_info.torrent_file} terminated!')
+        await self._cancel_tasks(piece_tasks)
+
+    def stop(self):
+        self._stop = True
