@@ -112,7 +112,7 @@ class Tracker:
         """
         while True:
             peers, interval = set(), self.__MIN_INTERVAL__
-            if self.last_run - time.time() > self.__MIN_INTERVAL__:
+            if time.time() - self.last_run > self.__MIN_INTERVAL__:
                 peers, interval = await self._request_peers()
                 for p_i in peers:
                     peer = Peer(p_i, self.torrent_info, file_handler, active_pieces)
