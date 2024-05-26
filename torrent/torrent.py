@@ -110,10 +110,12 @@ class Torrent:
             if piece_index is None:
                 continue
             piece_info = self.torrent_info.metadata.pieces_info[piece_index]
-            new_active_piece = ActivePiece(piece_index, piece_info, self.torrent_info.max_request_length)
+            new_active_piece = ActivePiece(piece_info, self.torrent_info.max_request_length)
             self.active_pieces.append(new_active_piece)
             new_piece_tasks.add(
-                asyncio.create_task(new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.uid}")
+                asyncio.create_task(
+                    new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.piece_info.index}"
+                )
             )
         return new_piece_tasks
 
