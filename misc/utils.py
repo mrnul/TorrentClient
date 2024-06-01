@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+from asyncio import Task
 from typing import Coroutine
 
 import bencdec
@@ -95,3 +96,14 @@ async def run_with_timeout(coro: Coroutine, timeout: float) -> bool:
     except TimeoutError:
         return False
     return True
+
+
+async def cancel_tasks(tasks: set[Task]):
+    """
+    Method to cancel and await for tasks to complete
+    """
+    if not tasks:
+        return
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)

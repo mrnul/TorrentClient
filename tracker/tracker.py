@@ -119,12 +119,12 @@ class Tracker:
                     if peer in peer_set:
                         continue
                     peer_set.add(peer)
-                    peer_tasks.add(
-                        asyncio.create_task(
-                            peer.run(torrent_bitfield),
-                            name=f'Peer {peer.peer_info.ip}'
-                        )
+                    peer_task = asyncio.create_task(
+                        peer.run(torrent_bitfield),
+                        name=f'Peer {peer.peer_info.ip}'
                     )
+                    peer_tasks.add(peer_task)
+                    peer_task.add_done_callback(peer_tasks.discard)
 
                 self.last_run = time.time()
             if interval < self.__MIN_INTERVAL__:
