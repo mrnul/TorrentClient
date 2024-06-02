@@ -50,7 +50,7 @@ class Tracker:
             remote_addr=(self.parsed_url.hostname, self.parsed_url.port)
         )
 
-    async def _build_tcp_transport_and_protocol_secure(self):
+    async def _build_tcp_transport_and_protocol(self, secure: bool = False):
         return await asyncio.get_event_loop().create_connection(
             lambda: TcpTrackerProtocol(
                 info_hash=self.torrent_info.metadata.info_hash,
@@ -60,22 +60,9 @@ class Tracker:
                 logger=self.logger,
             ),
             host=self.parsed_url.hostname,
-            port=443,
-            ssl=ssl.create_default_context(),
-            server_hostname=self.parsed_url.hostname
-        )
-
-    async def _build_tcp_transport_and_protocol(self):
-        return await asyncio.get_event_loop().create_connection(
-            lambda: TcpTrackerProtocol(
-                info_hash=self.torrent_info.metadata.info_hash,
-                self_port=self.torrent_info.self_port,
-                self_id=self.torrent_info.self_id,
-                tracker=self.tracker,
-                logger=self.logger,
-            ),
-            host=self.parsed_url.hostname,
-            port=80,
+            port=443 if secure else 80,
+            ssl=ssl.create_default_context() if secure else None,
+            server_hostname=self.parsed_url.hostname if secure else None
         )
 
     async def _request_peers(self) -> tuple[set[PeerInfo], int]:
@@ -88,7 +75,7 @@ class Tracker:
                     case 'http':
                         transport, protocol = await self._build_tcp_transport_and_protocol()
                     case 'https':
-                        transport, protocol = await self._build_tcp_transport_and_protocol_secure()
+                        transport, protocol = await self._build_tcp_transport_and_protocol(secure=True)
                     case 'udp':
                         transport, protocol = await self._build_udp_transport_and_protocol()
                     case _:
