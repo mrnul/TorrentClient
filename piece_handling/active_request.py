@@ -6,10 +6,21 @@ from piece_handling.active_piece import ActivePiece
 
 
 class ActiveRequest:
+    """
+    Active request is a request that can be passed into perform_request
+
+    It will be handled automatically by the peer protocol
+    """
     def __init__(self, active_piece: ActivePiece, request: Request):
         self.active_piece = active_piece
         self.request = request
         self.completed: Event = asyncio.Event()
+
+    @staticmethod
+    def from_active_piece(active_piece: ActivePiece):
+        if request := active_piece.get_request():
+            return ActiveRequest(active_piece, request)
+        return None
 
     @property
     def index(self) -> int:

@@ -40,15 +40,15 @@ class Peer:
         """
         if not self.protocol:
             return 0
-        return self.protocol.request_count()
+        return self.protocol.active_request_count()
 
     def _grab_request(self) -> ActiveRequest | None:
         for active_piece in self.active_pieces:
             if not self.protocol.has_piece(active_piece.piece_info.index):
                 continue
-            if not (request := active_piece.get_request()):
+            if not (active_request := ActiveRequest.from_active_piece(active_piece)):
                 continue
-            return ActiveRequest(active_piece, request)
+            return active_request
         return None
 
     def send(self, msg: Message):
@@ -87,7 +87,7 @@ class Peer:
             self.protocol.close_transport()
 
         # while transport is open keep communicating
-        while self.protocol.not_closing():
+        while self.protocol.alive():
             # check whether a Keepalive msg should be sent
             self.protocol.send_keepalive_if_necessary()
 

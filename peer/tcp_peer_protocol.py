@@ -43,12 +43,12 @@ class TcpPeerProtocol(asyncio.Protocol):
         """
         Checks if it is ok to send a request to the peer
         """
-        if self._status.ok_for_request() and len(self._active_requests) < 8 and self.not_closing():
+        if self._status.ok_for_request() and self.active_request_count() < 8 and self.alive():
             self._ready_for_requests.set()
         else:
             self._ready_for_requests.clear()
 
-    def request_count(self):
+    def active_request_count(self):
         return len(self._active_requests)
 
     def _find_matching_request(self, piece: Piece) -> ActiveRequest | None:
@@ -64,19 +64,17 @@ class TcpPeerProtocol(asyncio.Protocol):
         except Exception as e:
             active_request.completed.clear()
             active_request.put_request_back()
-            if isinstance(e, TimeoutError):
-                self.send(
-                    Cancel(
-                        active_request.request.index,
-                        active_request.request.begin,
-                        active_request.request.data_length
-                    )
+            self.send(
+                Cancel(
+                    active_request.request.index,
+                    active_request.request.begin,
+                    active_request.request.data_length
                 )
-            else:
-                print(f"Exception: {e} - {self} - {datetime.datetime.now()}")
+            )
+            print(f"Exception: {type(e).__name__} - {e} - {self} - {datetime.datetime.now()}")
         self._active_requests.discard(active_request)
-        active_request.request_processed()
         self._update_ready_for_requests()
+        active_request.request_processed()
         return active_request.completed.is_set()
 
     def perform_request(self, active_request: ActiveRequest, timeout: float):
@@ -86,15 +84,16 @@ class TcpPeerProtocol(asyncio.Protocol):
         """
         if self.send(active_request.request):
             self._active_requests.add(active_request)
+            self._update_ready_for_requests()
         _ = asyncio.create_task(self._wait_for_response(active_request, timeout))
 
     def send(self, msg: Message) -> bool:
         """
         Sends a message to the peer
-        Request messages are also added in self._requests set (one should use perform_request to send requests)
+        (one should use perform_request to send requests)
         Return True on success False otherwise
         """
-        if not self.not_closing():
+        if not self.alive():
             return False
         if isinstance(msg, Interested):
             self._status.am_interested.set()
@@ -107,6 +106,7 @@ class TcpPeerProtocol(asyncio.Protocol):
 
         self._transport.write(msg.to_bytes())
         self._last_tx_time = time.time()
+        self._update_ready_for_requests()
         print(f"{self} - Send - {msg} - {datetime.datetime.now()}")
         return True
 
@@ -173,13 +173,12 @@ class TcpPeerProtocol(asyncio.Protocol):
         # +4 for the first 4 bytes which hold the message length
         bytes_to_remove_from_buffer = msg.message_length + 4
         del self._buffer[0:bytes_to_remove_from_buffer]
-        self._update_ready_for_requests()
         return msg
 
     def has_piece(self, index: int):
         return self._bitfield.get_bit_value(index)
 
-    def not_closing(self):
+    def alive(self):
         return not self._transport.is_closing()
 
     async def wait_till_ready_to_perform_requests(self):
@@ -194,4 +193,5 @@ class TcpPeerProtocol(asyncio.Protocol):
     def data_received(self, data: bytes):
         self._buffer += data
         while m := self._consume_buffer():
+            self._update_ready_for_requests()
             print(f"{self} - Recv - {m} - {datetime.datetime.now()}")

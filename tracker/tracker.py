@@ -107,9 +107,15 @@ class Tracker:
                     if peer in peer_set:
                         continue
                     peer_set.add(peer)
+                    reserved = bytearray(int(0).to_bytes(8))
+                    reserved[5] = 0x10
                     peer_task = asyncio.create_task(
                         peer.run(
-                            handshake=Handshake(self.torrent_info.metadata.info_hash, self.torrent_info.self_id),
+                            handshake=Handshake(
+                                self.torrent_info.metadata.info_hash,
+                                self.torrent_info.self_id,
+                                reserved=reserved
+                            ),
                             bitfield=torrent_bitfield,
                             file_handler=file_handler
                         ),
