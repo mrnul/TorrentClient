@@ -7,7 +7,8 @@ from asyncio import Task, Event
 
 from file_handling.file_handler import FileHandler
 from logger.logger import Logger
-from messages import Bitfield
+from messages import Bitfield, Handshake
+from misc import utils
 from peer import Peer
 from peer.peer_info import PeerInfo
 from piece_handling.active_piece import ActivePiece
@@ -102,12 +103,16 @@ class Tracker:
             if time.time() - self.last_run > self.__MIN_INTERVAL__:
                 peers, interval = await self._request_peers()
                 for p_i in peers:
-                    peer = Peer(p_i, self.torrent_info, file_handler, active_pieces)
+                    peer = Peer(p_i, self.torrent_info, active_pieces)
                     if peer in peer_set:
                         continue
                     peer_set.add(peer)
                     peer_task = asyncio.create_task(
-                        peer.run(torrent_bitfield),
+                        peer.run(
+                            handshake=Handshake(self.torrent_info.metadata.info_hash, self.torrent_info.self_id),
+                            bitfield=torrent_bitfield,
+                            file_handler=file_handler
+                        ),
                         name=f'Peer {peer.peer_info.ip}'
                     )
                     peer_tasks.add(peer_task)
@@ -116,6 +121,6 @@ class Tracker:
                 self.last_run = time.time()
             if interval < self.__MIN_INTERVAL__:
                 interval = self.__MIN_INTERVAL__
-            await asyncio.wait_for(self.wake_up.wait(), interval)
+            await utils.run_with_timeout(self.wake_up.wait(), interval)
             if self.wake_up.is_set():
                 self.wake_up.clear()

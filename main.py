@@ -15,7 +15,7 @@ async def torrent2():
 
 
 async def main():
-    tasks = [asyncio.create_task(torrent1()), asyncio.create_task(torrent2())]
+    tasks = [asyncio.create_task(torrent1()),]
     await asyncio.wait(tasks)
 
 

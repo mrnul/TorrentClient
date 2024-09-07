@@ -1,19 +1,17 @@
 import asyncio
 import datetime
-import math
 import time
-from asyncio import Transport, Task
+from asyncio import Transport
 
+import bencdec
 from file_handling.file_handler import FileHandler
 from messages import Message, Handshake, Interested, NotInterested, Bitfield, Have, \
     Request, Unchoke, Choke, Piece, Unknown, Keepalive, Cancel
-from messages.extended import ExtendedHandshake, ExtendedMetadataPieceRequest, ExtendedMetadataPieceResponse, \
-    ExtendedMetadataPieceReject
+from messages.extended.extended import Extended
 from misc import utils
 from peer.status_events import StatusEvents
 from peer.timeouts import Timeouts
 from piece_handling.active_request import ActiveRequest
-from torrent.torrent_info import TorrentInfo
 
 
 class TcpPeerProtocol(asyncio.Protocol):
@@ -23,15 +21,15 @@ class TcpPeerProtocol(asyncio.Protocol):
     right after a connection is established
     """
 
-    def __init__(self, torrent_info: TorrentInfo, file_handler: FileHandler, name: str | None = None):
+    def __init__(self, bitfield_len: int, file_handler: FileHandler, name: str | None = None):
         self._active_requests: set[ActiveRequest] = set()
         self._transport: Transport | None = None
         self._status = StatusEvents()
+        self._ready_for_requests: asyncio.Event = asyncio.Event()
         self._name = name
-        self._torrent_info: TorrentInfo = torrent_info
         self._file_handler = file_handler
         self._last_tx_time = 0.0
-        self._bitfield: Bitfield = Bitfield(bytes(math.ceil(len(self._torrent_info.metadata.pieces_info) / 8)))
+        self._bitfield: Bitfield = Bitfield(bytes(bitfield_len))
         self._buffer: bytearray = bytearray()
 
     def __repr__(self):
@@ -41,15 +39,14 @@ class TcpPeerProtocol(asyncio.Protocol):
         if time.time() - self._last_tx_time >= Timeouts.Keep_alive:
             self.send(Keepalive())
 
-    def can_perform_request(self) -> bool:
+    def _update_ready_for_requests(self):
         """
         Checks if it is ok to send a request to the peer
         """
-        return (
-                self._status.ok_for_request()
-                and len(self._active_requests) < 8
-                and self.not_closing()
-        )
+        if self._status.ok_for_request() and len(self._active_requests) < 8 and self.not_closing():
+            self._ready_for_requests.set()
+        else:
+            self._ready_for_requests.clear()
 
     def request_count(self):
         return len(self._active_requests)
@@ -77,22 +74,19 @@ class TcpPeerProtocol(asyncio.Protocol):
                 )
             else:
                 print(f"Exception: {e} - {self} - {datetime.datetime.now()}")
-        finally:
-            self._active_requests.discard(active_request)
-            active_request.request_processed()
-            return active_request.completed.is_set()
+        self._active_requests.discard(active_request)
+        active_request.request_processed()
+        self._update_ready_for_requests()
+        return active_request.completed.is_set()
 
-    def perform_request(self, active_request: ActiveRequest, timeout: float) -> Task:
+    def perform_request(self, active_request: ActiveRequest, timeout: float):
         """
         Sends a request, creates a task that waits for the response
-        Returns the task to be awaited
-        The task is created whether the request has been sent or not and must be awaited
-        The result of the task is True if request was responded and False otherwise
-        Request object is properly updated / handled in either case
+        ActiveRequest object is properly updated / handled
         """
         if self.send(active_request.request):
             self._active_requests.add(active_request)
-        return asyncio.create_task(self._wait_for_response(active_request, timeout))
+        _ = asyncio.create_task(self._wait_for_response(active_request, timeout))
 
     def send(self, msg: Message) -> bool:
         """
@@ -113,6 +107,7 @@ class TcpPeerProtocol(asyncio.Protocol):
 
         self._transport.write(msg.to_bytes())
         self._last_tx_time = time.time()
+        print(f"{self} - Send - {msg} - {datetime.datetime.now()}")
         return True
 
     def connection_made(self, transport: Transport):
@@ -172,18 +167,13 @@ class TcpPeerProtocol(asyncio.Protocol):
             if request:
                 self._file_handler.write_piece(msg.index, msg.begin, msg.block)
                 request.completed.set()
-        elif isinstance(msg, ExtendedHandshake):
-            print(f"Recv: {self} - {msg}")
-        elif isinstance(msg, ExtendedMetadataPieceRequest):
-            print(f"Recv: {self} - {msg}")
-        elif isinstance(msg, ExtendedMetadataPieceResponse):
-            print(f"Recv: {self} - {msg}")
-        elif isinstance(msg, ExtendedMetadataPieceReject):
-            print(f"Recv: {self} - {msg}")
+        elif isinstance(msg, Extended):
+            self.extended_dict = bencdec.decode(msg.raw_data)
 
         # +4 for the first 4 bytes which hold the message length
         bytes_to_remove_from_buffer = msg.message_length + 4
         del self._buffer[0:bytes_to_remove_from_buffer]
+        self._update_ready_for_requests()
         return msg
 
     def has_piece(self, index: int):
@@ -192,8 +182,8 @@ class TcpPeerProtocol(asyncio.Protocol):
     def not_closing(self):
         return not self._transport.is_closing()
 
-    async def wait_for_unchoke(self):
-        await self._status.am_not_choked.wait()
+    async def wait_till_ready_to_perform_requests(self):
+        await self._ready_for_requests.wait()
 
     async def wait_for_handshake(self):
         await self._status.handshake.wait()
@@ -203,5 +193,5 @@ class TcpPeerProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes):
         self._buffer += data
-        while self._consume_buffer():
-            pass
+        while m := self._consume_buffer():
+            print(f"{self} - Recv - {m} - {datetime.datetime.now()}")

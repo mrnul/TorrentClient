@@ -1,5 +1,4 @@
 import asyncio
-from asyncio import Task
 
 from file_handling.file_handler import FileHandler
 from messages import Bitfield, Message, Handshake
@@ -17,13 +16,11 @@ class Peer:
     Class that handles connection with a peer.
     """
 
-    def __init__(self, peer_info: PeerInfo, torrent_info: TorrentInfo,
-                 file_handler: FileHandler, active_pieces: list[ActivePiece]):
+    def __init__(self, peer_info: PeerInfo, torrent_info: TorrentInfo, active_pieces: list[ActivePiece]):
         self.peer_id_str: str = peer_info.peer_id_tracker.decode(encoding='ascii', errors='ignore')
         self.peer_info = peer_info
         self.active_pieces = active_pieces
         self.torrent_info = torrent_info
-        self.file_handler = file_handler
         self.protocol: TcpPeerProtocol | None = None
 
     def __repr__(self):
@@ -46,8 +43,6 @@ class Peer:
         return self.protocol.request_count()
 
     def _grab_request(self) -> ActiveRequest | None:
-        if not self.protocol.can_perform_request():
-            return None
         for active_piece in self.active_pieces:
             if not self.protocol.has_piece(active_piece.piece_info.index):
                 continue
@@ -60,12 +55,12 @@ class Peer:
         if self.protocol:
             self.protocol.send(msg)
 
-    async def _create_tcp_connection(self):
+    async def _create_tcp_connection(self, bitfield_len: int, file_handler: FileHandler):
         try:
             _, self.protocol = await asyncio.get_running_loop().create_connection(
                 protocol_factory=lambda: TcpPeerProtocol(
-                    self.torrent_info,
-                    self.file_handler,
+                    bitfield_len=bitfield_len,
+                    file_handler=file_handler,
                     name=f"{self}"
                 ),
                 host=self.peer_info.ip,
@@ -75,53 +70,37 @@ class Peer:
             print(f"{self} - {e}")
         return self.protocol
 
-    async def run(self, bitfield: Bitfield):
+    async def run(self, handshake: Handshake, bitfield: Bitfield, file_handler: FileHandler):
         """
         Handles all peer communication
         """
         # try to create a connection using TcpPeerProtocol
-        if not await self._create_tcp_connection():
+        if not await self._create_tcp_connection(len(bitfield.data), file_handler):
             return
 
         # send handshake and bitfield
-        reserved = bytearray(int(0).to_bytes(8))
-        reserved[5] = 0x10  # extended message protocol
-        self.protocol.send(
-            Handshake(self.torrent_info.metadata.info_hash, self.torrent_info.self_id, reserved=reserved)
-        )
+        self.protocol.send(handshake)
         self.protocol.send(bitfield)
 
         # wait for handshake and terminate if timeout occurs
         if not await utils.run_with_timeout(self.protocol.wait_for_handshake(), Timeouts.Handshake):
             self.protocol.close_transport()
 
-        response_tasks: set[Task] = set()
         # while transport is open keep communicating
         while self.protocol.not_closing():
             # check whether a Keepalive msg should be sent
             self.protocol.send_keepalive_if_necessary()
 
-            # we can send requests only if unchoke is received
-            if not await utils.run_with_timeout(self.protocol.wait_for_unchoke(), Timeouts.Unchoke):
+            # wait for peer readiness
+            if not await utils.run_with_timeout(self.protocol.wait_till_ready_to_perform_requests(), Timeouts.Ready):
                 continue
 
             # now that we can make requests grab a request along with the active piece
             active_request: ActiveRequest = self._grab_request()
             if not active_request:
-                if not response_tasks:
-                    # at this point no new request and nothing to wait for
-                    await asyncio.sleep(Timeouts.Punish_queue)
-                else:
-                    # at this point no new request, but we are waiting for some responses
-                    done, response_tasks = await asyncio.wait(response_tasks, return_when=asyncio.FIRST_COMPLETED)
-                    if any(not completed.result() for completed in done):
-                        # if there is at least one request that was not fulfilled then punish by sleeping
-                        await asyncio.sleep(Timeouts.Punish_request)
+                await asyncio.sleep(Timeouts.Punish_request)
                 continue
-
-            # at this point we have grabbed a request, and we should send it
-            # add the tasks that will await for the response
-            response_tasks.add(self.protocol.perform_request(active_request, Timeouts.Request))
+            self.protocol.perform_request(active_request, Timeouts.Request)
 
         self.protocol = None
         print(f'{self} - Goodbye')
