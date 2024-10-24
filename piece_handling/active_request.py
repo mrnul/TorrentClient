@@ -7,9 +7,9 @@ from piece_handling.active_piece import ActivePiece
 
 class ActiveRequest:
     """
-    Active request is a request that can be passed into perform_request
+    Active request is a request that can be passed into XXXPeerProtocol.perform_request
 
-    It will be handled automatically by the peer protocol
+    It will be handled automatically by the protocol
     """
     def __init__(self, active_piece: ActivePiece, request: Request):
         self.active_piece = active_piece

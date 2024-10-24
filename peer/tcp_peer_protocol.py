@@ -9,8 +9,9 @@ from messages import Message, Handshake, Interested, NotInterested, Bitfield, Ha
     Request, Unchoke, Choke, Piece, Unknown, Keepalive, Cancel
 from messages.extended.extended import Extended
 from misc import utils
+from peer.score import Score
 from peer.status_events import StatusEvents
-from peer.timeouts import Timeouts
+from peer.configuration import Timeouts
 from piece_handling.active_request import ActiveRequest
 
 
@@ -22,7 +23,8 @@ class TcpPeerProtocol(asyncio.Protocol):
     """
 
     def __init__(self, bitfield_len: int, file_handler: FileHandler, name: str | None = None):
-        self._active_requests: set[ActiveRequest] = set()
+        self._score: Score = Score()
+        self._grabbed_active_requests: set[ActiveRequest] = set()
         self._transport: Transport | None = None
         self._status = StatusEvents()
         self._ready_for_requests: asyncio.Event = asyncio.Event()
@@ -31,12 +33,16 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._last_tx_time = 0.0
         self._bitfield: Bitfield = Bitfield(bytes(bitfield_len))
         self._buffer: bytearray = bytearray()
+        self._dead: asyncio.Event = asyncio.Event()
 
     def __repr__(self):
         return self._name if self._name else "<Empty>"
 
+    def get_score_value(self) -> float:
+        return self._score.calculate()
+
     def send_keepalive_if_necessary(self):
-        if time.time() - self._last_tx_time >= Timeouts.Keep_alive:
+        if time.time() - self._last_tx_time >= Timeouts.Keepalive:
             self.send(Keepalive())
 
     def _update_ready_for_requests(self):
@@ -49,10 +55,10 @@ class TcpPeerProtocol(asyncio.Protocol):
             self._ready_for_requests.clear()
 
     def active_request_count(self):
-        return len(self._active_requests)
+        return len(self._grabbed_active_requests)
 
     def _find_matching_request(self, piece: Piece) -> ActiveRequest | None:
-        for req in self._active_requests:
+        for req in self._grabbed_active_requests:
             if piece.index == req.index and piece.begin == req.begin and len(piece.block) == req.data_length:
                 return req
         return None
@@ -71,9 +77,10 @@ class TcpPeerProtocol(asyncio.Protocol):
                     active_request.request.data_length
                 )
             )
-            print(f"Exception: {type(e).__name__} - {e} - {self} - {datetime.datetime.now()}")
-        self._active_requests.discard(active_request)
+            print(f"{self} - Exception: {type(e).__name__} - {e} - {datetime.datetime.now()}")
+        self._grabbed_active_requests.discard(active_request)
         self._update_ready_for_requests()
+        self._score.update(active_request.completed.is_set())
         active_request.request_processed()
         return active_request.completed.is_set()
 
@@ -83,7 +90,7 @@ class TcpPeerProtocol(asyncio.Protocol):
         ActiveRequest object is properly updated / handled
         """
         if self.send(active_request.request):
-            self._active_requests.add(active_request)
+            self._grabbed_active_requests.add(active_request)
             self._update_ready_for_requests()
         _ = asyncio.create_task(self._wait_for_response(active_request, timeout))
 
@@ -107,13 +114,14 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._transport.write(msg.to_bytes())
         self._last_tx_time = time.time()
         self._update_ready_for_requests()
-        print(f"{self} - Send - {msg} - {datetime.datetime.now()}")
+        # print(f"{self} - Send - {msg} - {datetime.datetime.now()}")
         return True
 
     def connection_made(self, transport: Transport):
         self._transport = transport
 
     def connection_lost(self, exc):
+        self._dead.set()
         self.close_transport()
 
     def _consume_handshake(self):
@@ -175,13 +183,22 @@ class TcpPeerProtocol(asyncio.Protocol):
         del self._buffer[0:bytes_to_remove_from_buffer]
         return msg
 
+    async def punishment(self, duration: float = -1.0):
+        if duration < 0.0:
+            duration = self._score.get_punishment_duration()
+        await asyncio.sleep(duration)
+
     def has_piece(self, index: int):
         return self._bitfield.get_bit_value(index)
 
     def alive(self):
         return not self._transport.is_closing()
 
+    async def wait_till_dead(self):
+        await self._dead.wait()
+
     async def wait_till_ready_to_perform_requests(self):
+        await self.punishment()
         await self._ready_for_requests.wait()
 
     async def wait_for_handshake(self):
@@ -194,4 +211,4 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._buffer += data
         while m := self._consume_buffer():
             self._update_ready_for_requests()
-            print(f"{self} - Recv - {m} - {datetime.datetime.now()}")
+            # print(f"{self} - Recv - {m} - {datetime.datetime.now()}")

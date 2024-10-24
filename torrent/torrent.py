@@ -4,10 +4,10 @@ from asyncio import Task
 
 from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
-from misc import utils
 from peer import Peer
-from peer.timeouts import Timeouts
+from peer.configuration import Timeouts
 from piece_handling.active_piece import ActivePiece
+from piece_handling.active_request import ActiveRequest
 from piece_handling.piece_info import PieceInfo
 from torrent.torrent_info import TorrentInfo
 from tracker import Tracker
@@ -23,6 +23,7 @@ class Torrent:
         self.file_handler = FileHandler(self.torrent_info.metadata)
         self.peers: set[Peer] = set()
         self.peer_tasks: set[Task] = set()
+        self.peer_readiness_tasks: set[Task] = set()
         self.trackers: set[Tracker] = set()
         self.tracker_tasks: set[Task] = set()
         self.bitfield: Bitfield = Bitfield()
@@ -38,6 +39,7 @@ class Torrent:
                 t.tracker_main_job(
                     self.peers,
                     self.peer_tasks,
+                    self.peer_readiness_tasks,
                     self.bitfield,
                     self.file_handler,
                     self.active_pieces
@@ -67,9 +69,13 @@ class Torrent:
         """
         self.file_handler.completed_pieces.append(piece.piece_info.index)
         self.bitfield.set_bit_value(piece.piece_info.index, True)
-        print(f'Piece done: {piece.piece_info.index}')
+        print(
+            f'Piece done: {piece.piece_info.index} || '
+            f'Progress: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count}'
+        )
         for peer in self.peers:
-            peer.send(Have(piece.piece_info.index))
+            if peer.protocol_ready.is_set():
+                peer.protocol.send(Have(piece.piece_info.index))
         self.active_pieces.remove(piece)
 
     def _handle_hash_error(self, piece: ActivePiece):
@@ -84,8 +90,19 @@ class Torrent:
     def _update_active_pieces_and_piece_tasks(self):
         """
         Ensures that active piece list has at most max_active_pieces elements
-        Creates new actives pieces if necessary and their appropriate piece_tasks to await on request queue
+        Creates new actives pieces if necessary and their appropriate piece_tasks
+        Uses piece_done_callback to handle completed pieces
         """
+        def piece_done_callback(piece_task: Task):
+            result: ActivePiece = piece_task.result()
+            info: PieceInfo = result.piece_info
+            data = self.file_handler.read_piece(info.index, 0, info.length).block
+            if result.is_hash_ok(data):
+                self._handle_completed_piece(result)
+            else:
+                self._handle_hash_error(result)
+            self.piece_tasks.discard(piece_task)
+
         active_pieces_count = len(self.active_pieces)
         if active_pieces_count >= self.max_active_pieces:
             return
@@ -101,7 +118,7 @@ class Torrent:
                     new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.piece_info.index}"
                 )
             self.piece_tasks.add(new_piece_task)
-            new_piece_task.add_done_callback(self.piece_tasks.discard)
+            new_piece_task.add_done_callback(piece_done_callback)
 
     def _on_metadata_completion(self):
         print("Handling files...")
@@ -129,43 +146,41 @@ class Torrent:
         self._on_metadata_completion()
         print(f'Loaded: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count}')
 
-        # loop "forever"
         while not self._stop.is_set():
-            # create and create new piece_tasks if necessary
-            self._update_active_pieces_and_piece_tasks()
-            if not self.piece_tasks:
-                # simple seed mode since all pieces are received
-                print(f"{self.torrent_info.torrent_file} - Seeding...")
-                await asyncio.sleep(Timeouts.Progress)
-            else:
-                # wait for at least one queue to join
-                done_tasks, self.piece_tasks = await asyncio.wait(
-                    self.piece_tasks,
-                    return_when=asyncio.FIRST_COMPLETED,
-                    timeout=Timeouts.Progress
-                )
-                # for each completed piece read written data and check hash value
-                for done in done_tasks:
-                    result: ActivePiece = done.result()
-                    piece_info: PieceInfo = result.piece_info
-                    data = self.file_handler.read_piece(piece_info.index, 0, piece_info.length).block
-                    if result.is_hash_ok(data):
-                        self._handle_completed_piece(result)
-                    else:
-                        self._handle_hash_error(result)
+            if not self.peer_readiness_tasks:
+                print("No peer readiness tasks...")
+                await asyncio.sleep(1.0)
+                continue
 
-            peer_count = len(self.peer_tasks)
-            active_peers = sum(1 for peer in self.peers if peer.requests() > 0)
-            print(f"Active pieces count: {len(self.active_pieces)}")
-            print(
-                f'Progress {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count} | '
-                f'{peer_count} running peers | '
-                f'{active_peers} active peers\r\n'
+            self._update_active_pieces_and_piece_tasks()
+
+            if not self.piece_tasks:
+                print("No piece tasks...")
+                await asyncio.sleep(1.0)
+                continue
+
+            ready, self.peer_readiness_tasks = await asyncio.wait(
+                self.peer_readiness_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=Timeouts.Progress
             )
 
-        await utils.cancel_tasks(self.tracker_tasks)
-        await utils.cancel_tasks(self.peer_tasks)
-        await utils.cancel_tasks(self.piece_tasks)
+            ready_peers: list[Peer] = [r.result() for r in ready]
+            ready_peers.sort(reverse=True)
+
+            print([peer.protocol.get_score_value() for peer in ready_peers])
+            for peer in ready_peers:
+                if not peer.protocol.alive():
+                    continue
+                for active_piece in self.active_pieces:
+                    if not peer.protocol.has_piece(active_piece.piece_info.index):
+                        continue
+                    if not (active_request := ActiveRequest.from_active_piece(active_piece)):
+                        continue
+                    peer.protocol.perform_request(active_request, Timeouts.Request)
+                    break
+                if peer.protocol.alive():
+                    self.peer_readiness_tasks.add(asyncio.create_task(peer.wait_till_ready_for_requests()))
 
     def stop(self):
         self._stop.set()

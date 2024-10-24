@@ -92,7 +92,7 @@ class Tracker:
         return peers, interval
 
     async def tracker_main_job(
-            self, peer_set: set[Peer], peer_tasks: set[Task],
+            self, peer_set: set[Peer], peer_tasks: set[Task], peer_readiness_tasks: set[Task],
             torrent_bitfield: Bitfield, file_handler: FileHandler, active_pieces: list[ActivePiece]
     ):
         """
@@ -110,7 +110,7 @@ class Tracker:
                     reserved = bytearray(int(0).to_bytes(8))
                     reserved[5] = 0x10
                     peer_task = asyncio.create_task(
-                        peer.run(
+                        peer.run_till_dead(
                             handshake=Handshake(
                                 self.torrent_info.metadata.info_hash,
                                 self.torrent_info.self_id,
@@ -123,6 +123,11 @@ class Tracker:
                     )
                     peer_tasks.add(peer_task)
                     peer_task.add_done_callback(peer_tasks.discard)
+
+                    peer_readiness_task = asyncio.create_task(
+                        peer.wait_till_ready_for_requests()
+                    )
+                    peer_readiness_tasks.add(peer_readiness_task)
 
                 self.last_run = time.time()
             if interval < self.__MIN_INTERVAL__:

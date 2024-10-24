@@ -1,11 +1,11 @@
 import asyncio
 
 from file_handling.file_handler import FileHandler
-from messages import Bitfield, Message, Handshake
+from messages import Bitfield, Handshake
 from misc import utils
+from peer.configuration import Timeouts, Punishments
 from peer.peer_info import PeerInfo
 from peer.tcp_peer_protocol import TcpPeerProtocol
-from peer.timeouts import Timeouts
 from piece_handling.active_piece import ActivePiece
 from piece_handling.active_request import ActiveRequest
 from torrent.torrent_info import TorrentInfo
@@ -22,6 +22,7 @@ class Peer:
         self.active_pieces = active_pieces
         self.torrent_info = torrent_info
         self.protocol: TcpPeerProtocol | None = None
+        self.protocol_ready: asyncio.Event = asyncio.Event()
 
     def __repr__(self):
         return f"{self.peer_info.ip}:{self.peer_info.port}"
@@ -30,6 +31,9 @@ class Peer:
         if not isinstance(other, Peer):
             return False
         return self.peer_info == other.peer_info
+
+    def __lt__(self, other) -> bool:
+        return self.protocol.get_score_value() < other.protocol.get_score_value()
 
     def __hash__(self) -> int:
         return hash(self.peer_info)
@@ -42,7 +46,7 @@ class Peer:
             return 0
         return self.protocol.active_request_count()
 
-    def _grab_request(self) -> ActiveRequest | None:
+    async def _grab_request(self) -> ActiveRequest | None:
         for active_piece in self.active_pieces:
             if not self.protocol.has_piece(active_piece.piece_info.index):
                 continue
@@ -50,10 +54,6 @@ class Peer:
                 continue
             return active_request
         return None
-
-    def send(self, msg: Message):
-        if self.protocol:
-            self.protocol.send(msg)
 
     async def _create_tcp_connection(self, bitfield_len: int, file_handler: FileHandler):
         try:
@@ -68,12 +68,14 @@ class Peer:
             )
         except Exception as e:
             print(f"{self} - {e}")
+        self.protocol_ready.set()
         return self.protocol
 
-    async def run(self, handshake: Handshake, bitfield: Bitfield, file_handler: FileHandler):
+    async def run_till_dead(self, handshake: Handshake, bitfield: Bitfield, file_handler: FileHandler):
         """
         Handles all peer communication
         """
+        print(f'{self} - Hello')
         # try to create a connection using TcpPeerProtocol
         if not await self._create_tcp_connection(len(bitfield.data), file_handler):
             return
@@ -86,21 +88,11 @@ class Peer:
         if not await utils.run_with_timeout(self.protocol.wait_for_handshake(), Timeouts.Handshake):
             self.protocol.close_transport()
 
-        # while transport is open keep communicating
-        while self.protocol.alive():
-            # check whether a Keepalive msg should be sent
-            self.protocol.send_keepalive_if_necessary()
-
-            # wait for peer readiness
-            if not await utils.run_with_timeout(self.protocol.wait_till_ready_to_perform_requests(), Timeouts.Ready):
-                continue
-
-            # now that we can make requests grab a request along with the active piece
-            active_request: ActiveRequest = self._grab_request()
-            if not active_request:
-                await asyncio.sleep(Timeouts.Punish_request)
-                continue
-            self.protocol.perform_request(active_request, Timeouts.Request)
-
-        self.protocol = None
+        await self.protocol.wait_till_dead()
         print(f'{self} - Goodbye')
+
+
+    async def wait_till_ready_for_requests(self):
+        await self.protocol_ready.wait()
+        await self.protocol.wait_till_ready_to_perform_requests()
+        return self
