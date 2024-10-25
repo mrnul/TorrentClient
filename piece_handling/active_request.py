@@ -34,8 +34,11 @@ class ActiveRequest:
     def data_length(self) -> int:
         return self.request.data_length
 
-    def put_request_back(self):
-        self.active_piece.put_request_back(self.request)
+    def on_success(self):
+        self.completed.set()
+        self.active_piece.request_done()
 
-    def request_processed(self):
+    def on_failure(self):
+        self.completed.clear()
+        self.active_piece.put_request_back(self.request)
         self.active_piece.request_done()

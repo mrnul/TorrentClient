@@ -18,7 +18,7 @@ def calculate_hash(data: bytes) -> bytes:
 
 def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
     """
-    Translates data to the appropriate message given the message id
+    Translates data to the appropriate message given the message id.
     """
     match msg_id:
         case IDs.choke.value:
@@ -30,23 +30,23 @@ def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
         case IDs.not_interested.value:
             return NotInterested()
         case IDs.have.value:
-            return Have(piece_index=int.from_bytes(data))
+            return Have(piece_index=int.from_bytes(data, byteorder="big"))
         case IDs.bitfield.value:
             return Bitfield(bitfield=bytes(data))
         case IDs.request.value:
-            return Request(index=int.from_bytes(data[:4]),
-                           begin=int.from_bytes(data[4:8]),
-                           data_length=int.from_bytes(data[8:12]))
+            return Request(index=int.from_bytes(data[:4], byteorder="big"),
+                           begin=int.from_bytes(data[4:8], byteorder="big"),
+                           data_length=int.from_bytes(data[8:12], byteorder="big"))
         case IDs.piece.value:
-            return Piece(index=int.from_bytes(data[:4]),
-                         begin=int.from_bytes(data[4:8]),
+            return Piece(index=int.from_bytes(data[:4], byteorder="big"),
+                         begin=int.from_bytes(data[4:8], byteorder="big"),
                          block=bytes(data[8:]))
         case IDs.cancel.value:
-            return Cancel(index=int.from_bytes(data[:4]),
-                          begin=int.from_bytes(data[4:8]),
-                          data_length=int.from_bytes(data[8:13]))
+            return Cancel(index=int.from_bytes(data[:4], byteorder="big"),
+                          begin=int.from_bytes(data[4:8], byteorder="big"),
+                          data_length=int.from_bytes(data[8:13], byteorder="big"))
         case IDs.extended.value:
-            ext_id = int.from_bytes(data[:1])
+            ext_id = int.from_bytes(data[:1], byteorder="big")
             raw_data = bytes(data[1:])
             message_length = 2 + len(raw_data)
             decoded_data, offset = bencdec.decode(raw_data)
@@ -76,20 +76,29 @@ def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
 
 
 def buffer_to_msg(data: bytearray) -> Message | None:
+    """
+    The function expects the first four bytes of the buffer to represent the length of the message.
+    If the length is zero, a Keepalive object is returned.
+    If the buffer is too short or the indicated message length exceeds the available data, None is returned.
+    """
     data_mem_view = memoryview(data)
     if len(data_mem_view) < 4:
         return None
-    msg_len = int.from_bytes(data_mem_view[0:4])
+    msg_len = int.from_bytes(data_mem_view[0:4], byteorder="big")
     if msg_len == 0:
         return Keepalive()
     if len(data_mem_view[4:]) < msg_len:
         return None
-    msg_id = int.from_bytes(data_mem_view[4:5])
+    msg_id = int.from_bytes(data_mem_view[4:5], byteorder="big")
     msg = mem_view_to_msg(msg_id, data_mem_view[5: msg_len + 5 - 1])
     return msg
 
 
 async def run_with_timeout(coro: Coroutine, timeout: float) -> bool:
+    """
+    Simply awaits the coro with a timeout.
+    Returns true if coro is completed and false if timeout occurs
+    """
     try:
         async with asyncio.timeout(timeout):
             await coro

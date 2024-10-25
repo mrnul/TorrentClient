@@ -1,7 +1,6 @@
-import asyncio
-
 from messages import Request
 from misc import utils
+from misc.structures import QueueExt
 from piece_handling.piece_info import PieceInfo
 
 
@@ -11,9 +10,8 @@ class ActivePiece:
     """
     def __init__(self, piece_info: PieceInfo, max_request_length: int = 2 ** 14):
         self.piece_info: PieceInfo = piece_info
-        self._requests: asyncio.Queue[Request] = asyncio.Queue()
+        self._requests: QueueExt[Request] = QueueExt()
         self._max_request_length = max_request_length
-        self._requests = asyncio.Queue()
         self._build_requests()
 
     def __repr__(self):

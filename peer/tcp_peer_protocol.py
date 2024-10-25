@@ -27,12 +27,12 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._grabbed_active_requests: set[ActiveRequest] = set()
         self._transport: Transport | None = None
         self._status = StatusEvents()
-        self._ready_for_requests: asyncio.Event = asyncio.Event()
         self._name = name
         self._file_handler = file_handler
         self._last_tx_time = 0.0
         self._bitfield: Bitfield = Bitfield(bytes(bitfield_len))
         self._buffer: bytearray = bytearray()
+        self._ready_for_requests: asyncio.Event = asyncio.Event()
         self._dead: asyncio.Event = asyncio.Event()
 
     def __repr__(self):
@@ -67,9 +67,9 @@ class TcpPeerProtocol(asyncio.Protocol):
         try:
             async with asyncio.timeout(timeout):
                 await active_request.completed.wait()
+            active_request.on_success()
         except Exception as e:
-            active_request.completed.clear()
-            active_request.put_request_back()
+            active_request.on_failure()
             self.send(
                 Cancel(
                     active_request.request.index,
@@ -81,18 +81,21 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._grabbed_active_requests.discard(active_request)
         self._update_ready_for_requests()
         self._score.update(active_request.completed.is_set())
-        active_request.request_processed()
         return active_request.completed.is_set()
 
-    def perform_request(self, active_request: ActiveRequest, timeout: float):
+    def perform_request(self, active_request: ActiveRequest, timeout: float) -> bool:
         """
         Sends a request, creates a task that waits for the response
         ActiveRequest object is properly updated / handled
         """
-        if self.send(active_request.request):
+        if not self.check_if_ready_now():
+            active_request.on_failure()
+            return False
+        if result := self.send(active_request.request):
             self._grabbed_active_requests.add(active_request)
             self._update_ready_for_requests()
-        _ = asyncio.create_task(self._wait_for_response(active_request, timeout))
+        asyncio.create_task(self._wait_for_response(active_request, timeout))
+        return result
 
     def send(self, msg: Message) -> bool:
         """
@@ -121,7 +124,6 @@ class TcpPeerProtocol(asyncio.Protocol):
         self._transport = transport
 
     def connection_lost(self, exc):
-        self._dead.set()
         self.close_transport()
 
     def _consume_handshake(self):
@@ -197,14 +199,19 @@ class TcpPeerProtocol(asyncio.Protocol):
     async def wait_till_dead(self):
         await self._dead.wait()
 
-    async def wait_till_ready_to_perform_requests(self):
+    async def wait_till_ready(self):
         await self.punishment()
         await self._ready_for_requests.wait()
+
+    def check_if_ready_now(self):
+        return self._ready_for_requests.is_set()
 
     async def wait_for_handshake(self):
         await self._status.handshake.wait()
 
     def close_transport(self):
+        self._dead.set()
+        self._update_ready_for_requests()
         self._transport.close()
 
     def data_received(self, data: bytes):

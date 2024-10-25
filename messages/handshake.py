@@ -18,7 +18,7 @@ class Handshake(Message):
     def from_bytes(self, data: bytearray):
         if len(data) < 68:
             return None
-        self.pstrlen = int.from_bytes(data[:1])
+        self.pstrlen = int.from_bytes(data[:1], byteorder="big")
         if self.pstrlen != 19:
             raise ValueError(f'Handshake pstrlen is {self.pstrlen} but expected 19')
         self.pstr = data[1:20]

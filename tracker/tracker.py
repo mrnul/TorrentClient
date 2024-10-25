@@ -11,7 +11,6 @@ from messages import Bitfield, Handshake
 from misc import utils
 from peer import Peer
 from peer.peer_info import PeerInfo
-from piece_handling.active_piece import ActivePiece
 from torrent.torrent_info import TorrentInfo
 from tracker.tcp_tracker_protocol import TcpTrackerProtocol
 from tracker.udp_tracker_protocol import UdpTrackerProtocol
@@ -92,8 +91,12 @@ class Tracker:
         return peers, interval
 
     async def tracker_main_job(
-            self, peer_set: set[Peer], peer_tasks: set[Task], peer_readiness_tasks: set[Task],
-            torrent_bitfield: Bitfield, file_handler: FileHandler, active_pieces: list[ActivePiece]
+            self,
+            peer_set: set[Peer],
+            peer_tasks: set[Task],
+            peer_readiness_tasks: set[Task],
+            torrent_bitfield: Bitfield,
+            file_handler: FileHandler,
     ):
         """
         Tracker jobs run in the background to periodically perform requests, get peer lists and create peer tasks
@@ -103,7 +106,7 @@ class Tracker:
             if time.time() - self.last_run > self.__MIN_INTERVAL__:
                 peers, interval = await self._request_peers()
                 for p_i in peers:
-                    peer = Peer(p_i, self.torrent_info, active_pieces)
+                    peer = Peer(p_i)
                     if peer in peer_set:
                         continue
                     peer_set.add(peer)
@@ -125,7 +128,7 @@ class Tracker:
                     peer_task.add_done_callback(peer_tasks.discard)
 
                     peer_readiness_task = asyncio.create_task(
-                        peer.wait_till_ready_for_requests()
+                        peer.ready_for_requests()
                     )
                     peer_readiness_tasks.add(peer_readiness_task)
 

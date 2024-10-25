@@ -27,7 +27,7 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
 
     def _send_initial_data(self):
         self.logger.info('_send_initial_data')
-        self.transaction_id = int.from_bytes(random.randbytes(4))
+        self.transaction_id = int.from_bytes(random.randbytes(4), byteorder="big")
         msg = struct.pack(">QII", 0x41727101980, 0, self.transaction_id)
         self.transport.sendto(msg)
         self._handle_rxed_data = self._handle_initial_data_response
@@ -40,7 +40,7 @@ class UdpTrackerProtocol(asyncio.DatagramProtocol):
                              f' but received ({action}, {self.transaction_id})')
 
         parsed_url = urllib.parse.urlparse(self.tracker)
-        key = int.from_bytes(random.randbytes(2))
+        key = int.from_bytes(random.randbytes(2), byteorder="big")
         msg = struct.pack('>QII', conn_id, 1, self.transaction_id)
         msg += self.sha1
         msg += self.self_id

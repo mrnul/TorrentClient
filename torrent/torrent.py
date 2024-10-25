@@ -4,10 +4,10 @@ from asyncio import Task
 
 from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
+from misc.structures import SetExt
 from peer import Peer
-from peer.configuration import Timeouts
+from peer.configuration import Timeouts, Punishments
 from piece_handling.active_piece import ActivePiece
-from piece_handling.active_request import ActiveRequest
 from piece_handling.piece_info import PieceInfo
 from torrent.torrent_info import TorrentInfo
 from tracker import Tracker
@@ -23,13 +23,13 @@ class Torrent:
         self.file_handler = FileHandler(self.torrent_info.metadata)
         self.peers: set[Peer] = set()
         self.peer_tasks: set[Task] = set()
-        self.peer_readiness_tasks: set[Task] = set()
+        self.peer_readiness_tasks: SetExt[Task] = SetExt()
         self.trackers: set[Tracker] = set()
         self.tracker_tasks: set[Task] = set()
         self.bitfield: Bitfield = Bitfield()
         self.max_active_pieces: int = 0
         self.active_pieces: list[ActivePiece] = []
-        self.piece_tasks: set[Task] = set()
+        self.piece_tasks: SetExt[Task] = SetExt()
         self._stop: asyncio.Event = asyncio.Event()
 
     def _begin_trackers(self):
@@ -42,7 +42,6 @@ class Torrent:
                     self.peer_readiness_tasks,
                     self.bitfield,
                     self.file_handler,
-                    self.active_pieces
                 ), name=f'Tracker {tracker}')
             self.tracker_tasks.add(tracker_task)
             tracker_task.add_done_callback(self.tracker_tasks.discard)
@@ -70,12 +69,12 @@ class Torrent:
         self.file_handler.completed_pieces.append(piece.piece_info.index)
         self.bitfield.set_bit_value(piece.piece_info.index, True)
         print(
-            f'Piece done: {piece.piece_info.index} || '
+            f'{self.torrent_info.torrent_file} | '
+            f'Piece done: {piece.piece_info.index} | '
             f'Progress: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count}'
         )
         for peer in self.peers:
-            if peer.protocol_ready.is_set():
-                peer.protocol.send(Have(piece.piece_info.index))
+            peer.send(Have(piece.piece_info.index))
         self.active_pieces.remove(piece)
 
     def _handle_hash_error(self, piece: ActivePiece):
@@ -94,13 +93,18 @@ class Torrent:
         Uses piece_done_callback to handle completed pieces
         """
         def piece_done_callback(piece_task: Task):
-            result: ActivePiece = piece_task.result()
-            info: PieceInfo = result.piece_info
-            data = self.file_handler.read_piece(info.index, 0, info.length).block
-            if result.is_hash_ok(data):
-                self._handle_completed_piece(result)
-            else:
-                self._handle_hash_error(result)
+            try:
+                if piece_task.cancelled():
+                    return
+                result: ActivePiece = piece_task.result()
+                info: PieceInfo = result.piece_info
+                data = self.file_handler.read_piece(info.index, 0, info.length).block
+                if result.is_hash_ok(data):
+                    self._handle_completed_piece(result)
+                else:
+                    self._handle_hash_error(result)
+            except Exception as e:
+                print(f"Exception: {piece_task.get_name()} - {e}")
             self.piece_tasks.discard(piece_task)
 
         active_pieces_count = len(self.active_pieces)
@@ -147,40 +151,34 @@ class Torrent:
         print(f'Loaded: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count}')
 
         while not self._stop.is_set():
-            if not self.peer_readiness_tasks:
-                print("No peer readiness tasks...")
-                await asyncio.sleep(1.0)
-                continue
+            await self.peer_readiness_tasks.non_empty.wait()
 
-            self._update_active_pieces_and_piece_tasks()
-
-            if not self.piece_tasks:
-                print("No piece tasks...")
-                await asyncio.sleep(1.0)
-                continue
-
-            ready, self.peer_readiness_tasks = await asyncio.wait(
+            ready, pending = await asyncio.wait(
                 self.peer_readiness_tasks,
                 return_when=asyncio.FIRST_COMPLETED,
                 timeout=Timeouts.Progress
             )
 
-            ready_peers: list[Peer] = [r.result() for r in ready]
-            ready_peers.sort(reverse=True)
+            self._update_active_pieces_and_piece_tasks()
+            await self.piece_tasks.non_empty.wait()
 
-            print([peer.protocol.get_score_value() for peer in ready_peers])
+            self.peer_readiness_tasks.update(pending)
+            self.peer_readiness_tasks.difference_update(ready)
+
+            ready_peers: list[Peer] = [r.result() for r in ready]
+            ready_peers.sort(reverse=True)  # sort based on peer score
+
             for peer in ready_peers:
-                if not peer.protocol.alive():
+                if not peer.alive():
                     continue
-                for active_piece in self.active_pieces:
-                    if not peer.protocol.has_piece(active_piece.piece_info.index):
-                        continue
-                    if not (active_request := ActiveRequest.from_active_piece(active_piece)):
-                        continue
-                    peer.protocol.perform_request(active_request, Timeouts.Request)
-                    break
-                if peer.protocol.alive():
-                    self.peer_readiness_tasks.add(asyncio.create_task(peer.wait_till_ready_for_requests()))
+                count = 0
+                while peer.grab_and_perform_a_request(self.active_pieces, Timeouts.Request):
+                    count += 1
+                self.peer_readiness_tasks.add(
+                    asyncio.create_task(
+                        peer.ready_for_requests(None if count else Punishments.ActiveRequest)
+                    )
+                )
 
     def stop(self):
         self._stop.set()

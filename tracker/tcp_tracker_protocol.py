@@ -72,7 +72,7 @@ class TcpTrackerProtocol(asyncio.Protocol):
             if isinstance(raw_peers, bytes) and len(raw_peers) % 6 == 0:
                 for i in range(0, len(raw_peers), 6):
                     peer_ip = ipaddress.IPv4Address(raw_peers[i: i + 4])
-                    peer_port = int.from_bytes(raw_peers[i + 4: i + 6])
+                    peer_port = int.from_bytes(raw_peers[i + 4: i + 6], byteorder="big")
                     self.peer_data.add(PeerInfo(str(peer_ip), peer_port))
             elif isinstance(raw_peers, OrderedDict):
                 for p in raw_peers:
