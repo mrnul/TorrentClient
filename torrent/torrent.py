@@ -71,7 +71,8 @@ class Torrent:
         print(
             f'{self.torrent_info.torrent_file} | '
             f'Piece done: {piece.piece_info.index} | '
-            f'Progress: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count}'
+            f'Progress: {len(self.file_handler.completed_pieces)} / {self.torrent_info.metadata.piece_count} | '
+            f'Peers: {len(self.peer_tasks)}'
         )
         for peer in self.peers:
             peer.send(Have(piece.piece_info.index))
@@ -82,7 +83,7 @@ class Torrent:
         An active piece can be completed but with wrong hash value
         Put that piece back in pending pieces list in order to be downloaded again at some point
         """
-        print(f'Hash error: {piece.piece_info.index}')
+        print(f"{self.torrent_info.torrent_file} - Hash error: {piece.piece_info.index}")
         self.active_pieces.remove(piece)
         self.file_handler.pending_pieces.append(piece.piece_info.index)
 
@@ -139,7 +140,8 @@ class Torrent:
 
     async def start(self):
         """
-        Begins trackers, creates and awaits on piece_tasks if any, enters simple seed mode if all pieces are complete
+        Begins trackers, wakes up whenever a peer is ready to perform requests, handles piece tasks.
+        Basically handles everything, once start is called the download begins
         """
         self._begin_trackers()
 

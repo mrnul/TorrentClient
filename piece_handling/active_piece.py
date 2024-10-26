@@ -34,10 +34,17 @@ class ActivePiece:
             bytes_left -= length
 
     async def join_queue(self):
+        """
+        awaits for all tasks in queue to finish and returns self
+        """
         await self._requests.join()
         return self
 
     def get_request(self):
+        """
+        Get an element from the queue without waiting.
+        Returns None if queue is empty
+        """
         if self._requests.qsize() > 0:
             return self._requests.get_nowait()
         return None
@@ -55,4 +62,7 @@ class ActivePiece:
         return True
 
     def request_done(self):
+        """
+        Mark task as done
+        """
         self._requests.task_done()

@@ -18,6 +18,10 @@ class ActiveRequest:
 
     @staticmethod
     def from_active_piece(active_piece: ActivePiece):
+        """
+        Builds an ActiveRequest from ActivePiece.
+        None is returned if this piece has no requests in queue
+        """
         if request := active_piece.get_request():
             return ActiveRequest(active_piece, request)
         return None
@@ -35,10 +39,17 @@ class ActiveRequest:
         return self.request.data_length
 
     def on_success(self):
+        """
+        On success set completion event and update queue by marking task as done
+        """
         self.completed.set()
         self.active_piece.request_done()
 
     def on_failure(self):
+        """
+        On failure clear completion event, put request back in queue
+        and update queue by marking task as done
+        """
         self.completed.clear()
         self.active_piece.put_request_back(self.request)
         self.active_piece.request_done()

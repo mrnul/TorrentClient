@@ -66,17 +66,21 @@ class TcpTrackerProtocol(asyncio.Protocol):
         self.logger.info(f'status: {r.status}')
         if r.status == 200:
             raw = r.read()
-            response = bencdec.decode(raw)[0]
-            self.interval = response.get(INTERVAL, 60)
-            raw_peers = response[PEERS]
-            if isinstance(raw_peers, bytes) and len(raw_peers) % 6 == 0:
-                for i in range(0, len(raw_peers), 6):
-                    peer_ip = ipaddress.IPv4Address(raw_peers[i: i + 4])
-                    peer_port = int.from_bytes(raw_peers[i + 4: i + 6], byteorder="big")
-                    self.peer_data.add(PeerInfo(str(peer_ip), peer_port))
-            elif isinstance(raw_peers, OrderedDict):
-                for p in raw_peers:
-                    self.peer_data.add(PeerInfo(p[IP].decode(), p[PORT], p[PEER_ID]))
+            try:
+                response = bencdec.decode(raw)[0]
+            except ValueError as e:
+                print(e)
+            else:
+                self.interval = response.get(INTERVAL, 60)
+                raw_peers = response[PEERS]
+                if isinstance(raw_peers, bytes) and len(raw_peers) % 6 == 0:
+                    for i in range(0, len(raw_peers), 6):
+                        peer_ip = ipaddress.IPv4Address(raw_peers[i: i + 4])
+                        peer_port = int.from_bytes(raw_peers[i + 4: i + 6], byteorder="big")
+                        self.peer_data.add(PeerInfo(str(peer_ip), peer_port))
+                elif isinstance(raw_peers, OrderedDict):
+                    for p in raw_peers:
+                        self.peer_data.add(PeerInfo(p[IP].decode(), p[PORT], p[PEER_ID]))
         self.transport.close()
         if not self.future.cancelled():
             self.future.set_result(self.peer_data)

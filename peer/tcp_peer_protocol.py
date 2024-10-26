@@ -39,9 +39,16 @@ class TcpPeerProtocol(asyncio.Protocol):
         return self._name if self._name else "<Empty>"
 
     def get_score_value(self) -> float:
+        """
+        Returns the score value
+        """
         return self._score.calculate()
 
     def send_keepalive_if_necessary(self):
+        """
+        Checks how many seconds passed since last transmission
+        and send Keepalive if necessary
+        """
         if time.time() - self._last_tx_time >= Timeouts.Keepalive:
             self.send(Keepalive())
 
@@ -55,6 +62,9 @@ class TcpPeerProtocol(asyncio.Protocol):
             self._ready_for_requests.clear()
 
     def active_request_count(self):
+        """
+        Returns the number of currently running active requests
+        """
         return len(self._grabbed_active_requests)
 
     def _find_matching_request(self, piece: Piece) -> ActiveRequest | None:
@@ -186,30 +196,56 @@ class TcpPeerProtocol(asyncio.Protocol):
         return msg
 
     async def punishment(self, duration: float = -1.0):
+        """
+        Punish peer by sleeping.
+        If duration is negative then calculate duration based on score.
+        """
         if duration < 0.0:
             duration = self._score.get_punishment_duration()
         await asyncio.sleep(duration)
 
     def has_piece(self, index: int):
+        """
+        Returns true if peer has piece, false otherwise
+        """
         return self._bitfield.get_bit_value(index)
 
     def alive(self):
+        """
+        A method to check that peer connection is OK
+        """
         return not self._transport.is_closing()
 
     async def wait_till_dead(self):
+        """
+        Simply wait for _dead event
+        """
         await self._dead.wait()
 
     async def wait_till_ready(self):
+        """
+        Waits until peer is ready to perform requests AFTER punishment is applied
+        """
         await self.punishment()
         await self._ready_for_requests.wait()
 
     def check_if_ready_now(self):
+        """
+        Checks if peer is ready for requests now
+        """
+        self._update_ready_for_requests()
         return self._ready_for_requests.is_set()
 
     async def wait_for_handshake(self):
+        """
+        Waits for handshake to be received
+        """
         await self._status.handshake.wait()
 
     def close_transport(self):
+        """
+        Closes the connection
+        """
         self._dead.set()
         self._update_ready_for_requests()
         self._transport.close()
