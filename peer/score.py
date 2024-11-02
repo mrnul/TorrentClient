@@ -7,7 +7,7 @@ class Score:
     Each time update is called the new value is added to the list and the oldest value is removed.
     The purpose of this class is to figure out the punishment of peers depending on success rate
     """
-    def __init__(self, optimistic: bool = True, history_count: int = 10):
+    def __init__(self, optimistic: bool = True, history_count: int = 20):
         self.count: int = history_count
         self.history_record: list[bool] = [optimistic] * history_count
 

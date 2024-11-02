@@ -5,8 +5,8 @@ from asyncio import Task
 from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
 from misc.structures import SetExt
-from peer import Peer
 from peer.configuration import Timeouts, Punishments
+from peer.peer_base import PeerBase
 from piece_handling.active_piece import ActivePiece
 from piece_handling.piece_info import PieceInfo
 from torrent.torrent_info import TorrentInfo
@@ -21,7 +21,7 @@ class Torrent:
     def __init__(self, torrent_info: TorrentInfo):
         self.torrent_info = torrent_info
         self.file_handler = FileHandler(self.torrent_info.metadata)
-        self.peers: set[Peer] = set()
+        self.peers: set[PeerBase] = set()
         self.peer_tasks: set[Task] = set()
         self.peer_readiness_tasks: SetExt[Task] = SetExt()
         self.trackers: set[Tracker] = set()
@@ -167,7 +167,7 @@ class Torrent:
             self.peer_readiness_tasks.update(pending)
             self.peer_readiness_tasks.difference_update(ready)
 
-            ready_peers: list[Peer] = [r.result() for r in ready]
+            ready_peers: list[PeerBase] = [r.result() for r in ready]
             ready_peers.sort(reverse=True)  # sort based on peer score
 
             for peer in ready_peers:
@@ -178,7 +178,7 @@ class Torrent:
                     count += 1
                 self.peer_readiness_tasks.add(
                     asyncio.create_task(
-                        peer.ready_for_requests(None if count else Punishments.ActiveRequest)
+                        peer.wait_till_ready(None if count else Punishments.ActiveRequest)
                     )
                 )
 

@@ -9,8 +9,9 @@ from file_handling.file_handler import FileHandler
 from logger.logger import Logger
 from messages import Bitfield, Handshake
 from misc import utils
-from peer import Peer
 from peer.peer_info import PeerInfo
+from peer.peer_base import PeerBase
+from peer.tcp_peer_stream import TcpPeerStream
 from torrent.torrent_info import TorrentInfo
 from tracker.tcp_tracker_protocol import TcpTrackerProtocol
 from tracker.udp_tracker_protocol import UdpTrackerProtocol
@@ -92,7 +93,7 @@ class Tracker:
 
     async def tracker_main_job(
             self,
-            peer_set: set[Peer],
+            peer_set: set[PeerBase],
             peer_tasks: set[Task],
             peer_readiness_tasks: set[Task],
             torrent_bitfield: Bitfield,
@@ -106,7 +107,7 @@ class Tracker:
             if time.time() - self.last_run > self.__MIN_INTERVAL__:
                 peers, interval = await self._request_peers()
                 for p_i in peers:
-                    peer = Peer(p_i)
+                    peer = TcpPeerStream(p_i, len(torrent_bitfield.data), file_handler)
                     if peer in peer_set:
                         continue
                     peer_set.add(peer)
@@ -118,17 +119,15 @@ class Tracker:
                                 self.torrent_info.metadata.info_hash,
                                 self.torrent_info.self_id,
                                 reserved=reserved
-                            ),
-                            bitfield=torrent_bitfield,
-                            file_handler=file_handler
+                            )
                         ),
-                        name=f'Peer {peer.peer_info.ip}'
+                        name=f'Peer {p_i.ip}'
                     )
                     peer_tasks.add(peer_task)
                     peer_task.add_done_callback(peer_tasks.discard)
 
                     peer_readiness_task = asyncio.create_task(
-                        peer.ready_for_requests()
+                        peer.wait_till_ready()
                     )
                     peer_readiness_tasks.add(peer_readiness_task)
 
