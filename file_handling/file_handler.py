@@ -3,23 +3,25 @@ import os
 from file_handling.file import File
 from messages import Piece
 from misc import utils
-from torrent.torrent_info import TorrentInfo
+from torrent.metadata import Metadata
 
 
 class FileHandler:
     """
     Class to handle files in torrent
     """
-    def __init__(self, torrent_info: TorrentInfo):
-        self.torrent_info = torrent_info
-        self.files: tuple[File, ...] = self._ensure_files()
+    def __init__(self, metadata: Metadata):
+        self.metadata = metadata
+        self.files: tuple[File, ...] = tuple()
+        self.completed_pieces: list[int] = []
+        self.pending_pieces: list[int] = []
 
-    def _ensure_files(self) -> tuple[File, ...]:
+    def on_metadata_completion(self):
         """
         Ensures that directories and files in torrent are created and have the correct length
         """
         files: list[File] = []
-        for file in self.torrent_info.files_info:
+        for file in self.metadata.files_info:
             os.makedirs(os.path.dirname(file.path), exist_ok=True)
             if not os.path.exists(file.path):
                 open(file.path, "x").close()
@@ -29,16 +31,17 @@ class FileHandler:
                 f.flush()
             f.seek(0)
             files.append(File(f, file))
-        return tuple(files)
+        self.files = tuple(files)
+        self._calculate_pending_and_completed_pieces()
 
-    def get_completed_pieces(self) -> list[int]:
+    def _calculate_pending_and_completed_pieces(self):
         """
-        Get a list of completed pieces' index
+        Update the lists of pending and completed pieces
         """
-        result: list[int] = []
+        self.completed_pieces: list[int] = []
         try:
             file_index = 0
-            for piece_info in self.torrent_info.pieces_info:
+            for piece_info in self.metadata.pieces_info:
                 bytes_left = piece_info.length
                 data = b''
                 while bytes_left:
@@ -49,18 +52,20 @@ class FileHandler:
                         file_index += 1
                     bytes_left -= bytes_read
                 if utils.calculate_hash(data) == piece_info.hash_value:
-                    result.append(piece_info.index)
+                    self.completed_pieces.append(piece_info.index)
         except (Exception,):
             pass
         for file in self.files:
             file.io.seek(0)
-        return result
+        self.pending_pieces = list(set(range(self.metadata.piece_count)) - set(self.completed_pieces))
 
     def write_piece(self, index: int, begin: int, data: bytes) -> bool:
         """
         Writes a piece to the appropriate torrent files
         """
-        file_index, offset = self.byte_in_torrent_to_file_and_offset(index * self.torrent_info.piece_size + begin)
+        file_index, offset = self._byte_in_torrent_to_file_and_offset(
+            index * self.metadata.piece_size + begin
+        )
         if file_index is None or offset is None:
             return False
 
@@ -82,7 +87,7 @@ class FileHandler:
             offset = 0
         return True
 
-    def byte_in_torrent_to_file_and_offset(self, byte_in_torrent: int) -> tuple[int | None, int | None]:
+    def _byte_in_torrent_to_file_and_offset(self, byte_in_torrent: int) -> tuple[int | None, int | None]:
         """
         It figures out which file and offset correspond to a byte in torrent
         """
@@ -95,8 +100,8 @@ class FileHandler:
         """
         Reads the appropriate piece that can be used as a response to a request
         """
-        file_index, offset = self.byte_in_torrent_to_file_and_offset(
-            index * self.torrent_info.piece_size + begin
+        file_index, offset = self._byte_in_torrent_to_file_and_offset(
+            index * self.metadata.piece_size + begin
         )
         if file_index is None or offset is None:
             return None

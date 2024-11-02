@@ -1,0 +1,6 @@
+M = b'm'
+METADATA = b'ut_metadata'
+METADATA_SIZE = b'metadata_size'
+MSG_TYPE = b'msg_type'
+PIECE = b'piece'
+TOTAL_SIZE = b'total_size'

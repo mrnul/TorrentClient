@@ -19,7 +19,7 @@ def _get_element_type_at_index(data: bytes, index: int) -> common.ElementType:
     return common.ElementType.STR
 
 
-def _decode_str(data: bytes, index: int = 0) -> tuple[str | bytes | None, int]:
+def _decode_str(data: bytes, index: int = 0) -> tuple[str | bytes, int]:
     """
     Extract the string value that starts at <index> in data
 
@@ -42,7 +42,7 @@ def _decode_str(data: bytes, index: int = 0) -> tuple[str | bytes | None, int]:
     return result, end_index
 
 
-def _decode_int(data: bytes, index: int = 0) -> tuple[int | None, int]:
+def _decode_int(data: bytes, index: int = 0) -> tuple[int, int]:
     """
     Extract the int value that starts at <index> in data
 
@@ -121,19 +121,27 @@ def _get_element(data: bytes, index: int) -> tuple[list | dict | int | str | Non
     return value, new_index
 
 
-def decode(data: bytes | str) -> OrderedDict | list | str | None:
+def decode(data: bytes | str) -> tuple[OrderedDict | list | str | int, int]:
     """
     Decodes bencoded data
+    returns a tuple where the first element is the decoded data
+    and the second element is the length of encoded data
+
+    for example:
+        decode(b'i123e') would return (123, 5)
+        decode(b'i123e hello') would return (123, 5)
+        decode(b'd8:msg_typei1e5:piecei0e10:total_sizei34256eexxxxxxxx') would return
+            (OrderedDict([(b'msg_type', 1), (b'piece', 0), (b'total_size', 34256)]), 45)
     """
     if isinstance(data, str):
         data = data.encode()
     root_element_type = _get_element_type_at_index(data, 0)
     match root_element_type:
         case common.ElementType.LIST:
-            return _decode_list(data)[0]
+            return _decode_list(data)
         case common.ElementType.DICT:
-            return _decode_dict(data)[0]
+            return _decode_dict(data)
         case common.ElementType.INT:
-            return _decode_int(data)[0]
+            return _decode_int(data)
         case common.ElementType.STR:
-            return _decode_str(data)[0]
+            return _decode_str(data)

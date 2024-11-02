@@ -9,4 +9,4 @@ class NotInterested(Message):
         super().__init__(1, IDs.not_interested.value)
 
     def to_bytes(self) -> bytes:
-        return struct.pack('>IB', self.message_length, self.id)
+        return struct.pack('>IB', self.message_length, self.uid)

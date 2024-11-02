@@ -14,4 +14,15 @@ class IDs(Enum):
     extended = 20
 
 
-ALL_IDs = [uid.value for uid in IDs]
+class ExtIDs(Enum):
+    handshake = 0
+    metadata = 2
+
+
+class ExtMetadataIDs(Enum):
+    request = 0
+    data = 1
+    reject = 2
+
+
+ALL_IDs = [uid.value for uid in IDs] + [uid.value for uid in ExtIDs]
