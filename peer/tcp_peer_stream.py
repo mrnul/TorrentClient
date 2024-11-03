@@ -7,7 +7,6 @@ from misc import utils
 from peer.peer_info import PeerInfo
 from peer.peer_base import PeerBase
 
-# noinspection PyBroadException
 class TcpPeerStream(PeerBase):
     def __init__(self, peer_info: PeerInfo, bitfield_len: int, file_handler: FileHandler):
         super().__init__(peer_info, bitfield_len, file_handler)
@@ -20,13 +19,13 @@ class TcpPeerStream(PeerBase):
                 self._peer_info.ip, self._peer_info.port
             )
             asyncio.create_task(self._reader_task())
-        except Exception:
-            self._dead.set()
+        except Exception as e:
+            self.printer(f"{e}")
             return False
         return True
 
     async def _reader_task(self):
-        print(f"{self} - _reader_task - started")
+        self.printer("started")
         try:
             pstrlen = int.from_bytes(await self._reader.readexactly(1), byteorder="big")
             pstr = await self._reader.readexactly(pstrlen)
@@ -34,11 +33,11 @@ class TcpPeerStream(PeerBase):
             info_hash = await self._reader.readexactly(20)
             peer_id = await self._reader.readexactly(20)
             self.handle_msg(Handshake(info_hash, peer_id, pstr, reserved))
-            print(f"{self} - _reader_task - Handshake OK")
-        except Exception:
-            await self.close()
+            self.printer("Handshake OK")
+        except Exception as e:
+            self.printer(f"{e}")
+            await self.close_connection()
         while self.alive():
-            self._update_ready_for_requests()
             try:
                 msg_len = int.from_bytes(await self._reader.readexactly(4), byteorder="big")
                 if msg_len == 0:
@@ -48,13 +47,13 @@ class TcpPeerStream(PeerBase):
                 msg_bytes = await self._reader.readexactly(msg_len - 1)
                 msg = utils.mem_view_to_msg(msg_id, memoryview(msg_bytes))
                 self.handle_msg(msg)
-            except Exception:
-                await self.close()
-        self._dead.set()
-        print(f"{self} - _reader_task - stopped")
+            except Exception as e:
+                self.printer(f"{e}")
+                await self.close_connection()
+        self.printer("Stopped")
 
 
-    async def close(self):
+    async def close_connection(self):
         if not self._writer:
             return
         if self._writer.is_closing():
@@ -63,7 +62,7 @@ class TcpPeerStream(PeerBase):
             self._writer.close()
             await self._writer.wait_closed()
         except Exception as e:
-            print(f"{self} - close - {e}")
+            self.printer(f"{e}")
 
 
     def alive(self):

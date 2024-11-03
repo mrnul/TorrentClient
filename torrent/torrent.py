@@ -178,7 +178,7 @@ class Torrent:
                     count += 1
                 self.peer_readiness_tasks.add(
                     asyncio.create_task(
-                        peer.wait_till_ready(None if count else Punishments.ActiveRequest)
+                        peer.wait_till_ready_or_dead(None if count else Punishments.ActiveRequest)
                     )
                 )
 

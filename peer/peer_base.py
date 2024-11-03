@@ -9,29 +9,39 @@ from messages import Message, Bitfield, Interested, NotInterested, Choke, Unchok
     Handshake, Cancel, Keepalive
 from messages.extended.extended import Extended
 from misc import utils
-from peer.configuration import Timeouts
+from peer.configuration import Timeouts, Limits
 from peer.peer_info import PeerInfo
 from peer.score import Score
-from peer.status_events import StatusEvents
+from peer.status_events import StatusFlags
 from piece_handling.active_piece import ActivePiece
 from piece_handling.active_request import ActiveRequest
 
 
 class PeerBase:
+    """
+    Class that acts as a base class and provides the core functionality for peer communication.
+    This is connection agnostic meaning that it does not know how the data are RXed / TXed
+    So the following methods must be implemented by those who inherit this class (check TcpPeerStream class):
+    - close
+    - alive
+    - create_tcp_connection
+    - send_bytes
+    """
 
     def __init__(self, peer_info: PeerInfo, bitfield_len: int, file_handler: FileHandler):
         self._score: Score = Score()
         self._grabbed_active_requests: set[ActiveRequest] = set()
-        self._status = StatusEvents()
+        self._status = StatusFlags()
         self._file_handler = file_handler
         self._last_tx_time = 0.0
         self._bitfield: Bitfield = Bitfield(bytes(bitfield_len))
-        self._ready_for_requests: asyncio.Event = asyncio.Event()
-        self._dead: asyncio.Event = asyncio.Event()
         self._peer_id_str: str = peer_info.peer_id_tracker.decode(encoding='ascii', errors='ignore')
         self._peer_info: PeerInfo = peer_info
         self._self_report_name: bytes = bytes()
-        self.extended_dict: dict = dict()
+        self._extended_dict: dict = dict()
+        self._ready_for_requests_or_dead: asyncio.Event = asyncio.Event()
+        self._dead: asyncio.Event = asyncio.Event()
+        self._handshaked: asyncio.Event = asyncio.Event()
 
     def __repr__(self):
         return f"{self._peer_info.ip} : {self._peer_info.port} | {self._self_report_name.decode(errors='ignore')}"
@@ -56,6 +66,11 @@ class PeerBase:
         """
         return hash(self._peer_info)
 
+    def printer(self, msg: str):
+        import inspect
+        caller_name = inspect.stack()[1][3]
+        print(f"{self} - {caller_name}: {msg}")
+
     def handle_msg(self, msg: Message) -> bool:
         """
         Function that handles incoming msg
@@ -64,17 +79,19 @@ class PeerBase:
         if not msg:
             return True
         if isinstance(msg, Unchoke):
-            self._status.am_not_choked.set()
+            self._status.am_choked = False
             self.send(Unchoke())
         elif isinstance(msg, Choke):
-            self._status.am_not_choked.clear()
+            self._status.am_choked = True
             self.send(Choke())
         elif isinstance(msg, Interested):
-            self._status.am_interesting.set()
+            self._status.am_interesting = True
         elif isinstance(msg, NotInterested):
-            self._status.am_interesting.clear()  # lol
+            self._status.am_interesting = False  # lol
         elif isinstance(msg, Bitfield):
             if self._bitfield.message_length != msg.message_length:
+                self.close_connection()
+                self._update_events()
                 return False
             else:
                 self._bitfield = Bitfield(msg.data)
@@ -85,6 +102,8 @@ class PeerBase:
             response: Piece = self._file_handler.read_piece(msg.index, msg.begin, msg.data_length)
             self.send(response)
         elif isinstance(msg, Unknown):
+            self.close_connection()
+            self._update_events()
             return False
         elif isinstance(msg, Piece):
             request = self._find_matching_request(msg)
@@ -92,11 +111,11 @@ class PeerBase:
                 self._file_handler.write_piece(msg.index, msg.begin, msg.block)
                 request.completed.set()
         elif isinstance(msg, Extended):
-            self.extended_dict = bencdec.decode(msg.raw_data)
+            self._extended_dict = bencdec.decode(msg.raw_data)
         elif isinstance(msg, Handshake):
-            self._status.handshake.set()
+            self._status.handshake = True
             self._self_report_name = msg.peer_id
-        self._update_ready_for_requests()
+        self._update_events()
         return True
 
     def _find_matching_request(self, piece: Piece) -> ActiveRequest | None:
@@ -108,14 +127,20 @@ class PeerBase:
                 return req
         return None
 
-    def _update_ready_for_requests(self):
+    def _update_events(self):
         """
-        Checks if it is ok to send a request to the peer
+        Sets or clears the appropriate events
         """
-        if self._status.ok_for_request() and self.active_request_count() < 8 and self.alive():
-            self._ready_for_requests.set()
+        if not self.alive():
+            self._ready_for_requests_or_dead.set()
+            self._dead.set()
+        elif self._status.ok_for_request() and self.active_request_count() < Limits.MaxActiveRequests:
+            self._ready_for_requests_or_dead.set()
         else:
-            self._ready_for_requests.clear()
+            self._ready_for_requests_or_dead.clear()
+
+        if self._status.handshake:
+            self._handshaked.set()
 
     async def _wait_for_response(self, active_request: ActiveRequest, timeout: float) -> bool:
         """
@@ -134,14 +159,14 @@ class PeerBase:
                     active_request.request.data_length
                 )
             )
-            print(f"{self} - _wait_for_response: {type(e).__name__} - {e} - {datetime.datetime.now()} - {self._score.calculate()}")
+            self.printer(f"{type(e).__name__} - {e} - {datetime.datetime.now()} - {self._score.calculate()}")
         self._grabbed_active_requests.discard(active_request)
-        self._update_ready_for_requests()
+        self._update_events()
         self._score.update(active_request.completed.is_set())
         return active_request.completed.is_set()
 
     async def _keep_alive(self):
-        print(f"{self} - _keep_alive - started")
+        self.printer("started")
         while True:
             non_tx_time = time.time() - self._last_tx_time
             if non_tx_time >= Timeouts.Keepalive:
@@ -152,7 +177,7 @@ class PeerBase:
                 await asyncio.sleep(time_to_sleep)
             except CancelledError:
                 break
-        print(f"{self} - _keep_alive - stopped")
+        self.printer("stopped")
 
     def get_score_value(self) -> float:
         return self._score.calculate()
@@ -163,17 +188,21 @@ class PeerBase:
         """
         # try to create a connection
         if not await self.create_tcp_connection():
+            self._update_events()
             return
 
         # send handshake and bitfield
         if not self.send(handshake):
+            self._update_events()
             return
         if not self.send(self._bitfield):
+            self._update_events()
             return
 
         # wait for handshake and terminate if timeout occurs
         if not await utils.run_with_timeout(self.wait_for_handshake(), Timeouts.Handshake):
-            await self.close()
+            await self.close_connection()
+            self._update_events()
 
         keep_alive_task = asyncio.create_task(self._keep_alive())
 
@@ -204,7 +233,7 @@ class PeerBase:
             return False
         if result := self.send(active_request.request):
             self._grabbed_active_requests.add(active_request)
-            self._update_ready_for_requests()
+        self._update_events()
         asyncio.create_task(self._wait_for_response(active_request, timeout))
         return result
 
@@ -223,54 +252,58 @@ class PeerBase:
         if not self.alive():
             return False
         if isinstance(msg, Interested):
-            self._status.am_interested.set()
+            self._status.am_interested = True
         elif isinstance(msg, NotInterested):
-            self._status.am_interested.clear()
+            self._status.am_interested = False
         if isinstance(msg, Choke):
-            self._status.am_not_choking.clear()
+            self._status.am_choking = True
         elif isinstance(msg, Unchoke):
-            self._status.am_not_choking.set()
+            self._status.am_choked = False
         self._last_tx_time = time.time()
-        self._update_ready_for_requests()
+        self._update_events()
         return self.send_bytes(msg.to_bytes())
-
-    async def punishment(self, duration: float = -1.0):
-        """
-        Sleeps for a specific amount of seconds
-        If duration is negative the duration is calculated based on score
-        """
-        if duration < 0.0:
-            duration = self.get_score_value()
-        await asyncio.sleep(duration)
 
     def has_piece(self, index: int) -> bool:
         return self._bitfield.get_bit_value(index) != 0
 
-    async def wait_till_ready(self, delay: float = 0.0):
+    async def wait_till_ready_or_dead(self, delay: float | None = None):
         if delay:
             await asyncio.sleep(delay)
-        await self.punishment()
-        await self._ready_for_requests.wait()
+        await self._ready_for_requests_or_dead.wait()
         return self
 
     def check_if_ready_now(self) -> bool:
-        self._update_ready_for_requests()
-        return self._ready_for_requests.is_set()
+        self._update_events()
+        return self._ready_for_requests_or_dead.is_set() and self.alive()
 
     async def wait_for_handshake(self):
-        await self._status.handshake.wait()
+        await self._handshaked.wait()
 
     def active_request_count(self) -> int:
         return len(self._grabbed_active_requests)
 
-    async def close(self):
+    async def close_connection(self):
+        """
+        This method is used to close connection
+        """
         raise NotImplementedError()
 
     def alive(self) -> bool:
+        """
+        This method checks if connection is "alive"
+        """
         raise NotImplementedError()
 
     async def create_tcp_connection(self) -> bool:
+        """
+        Method to actually create the connection.
+        This method must return True on success and False otherwise
+        """
         raise NotImplementedError()
 
     def send_bytes(self, data: bytes) -> bool:
+        """
+        Method that transmits raw data.
+        This method must return True on success and False otherwise
+        """
         raise NotImplementedError()

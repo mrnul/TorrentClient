@@ -1,7 +1,7 @@
 import dataclasses
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Timeouts:
     # Number of seconds until a request is timed-out (not responded)
     Request: float = 10.0
@@ -19,7 +19,7 @@ class Timeouts:
     Progress: float = 1.0
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class Punishments:
     # When a peer cannot grab an active request punish by sleeping
     # (for example, we are missing piece index I, but peer does not have that piece)
@@ -27,3 +27,8 @@ class Punishments:
 
     # When a Request timeout / error occurs peer is being punished by sleeping
     Request: float = 10.0
+
+
+@dataclasses.dataclass(frozen=True)
+class Limits:
+    MaxActiveRequests: int = 4  # the number of active requests a peer should wait at a time

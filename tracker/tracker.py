@@ -127,7 +127,7 @@ class Tracker:
                     peer_task.add_done_callback(peer_tasks.discard)
 
                     peer_readiness_task = asyncio.create_task(
-                        peer.wait_till_ready()
+                        peer.wait_till_ready_or_dead()
                     )
                     peer_readiness_tasks.add(peer_readiness_task)
 
