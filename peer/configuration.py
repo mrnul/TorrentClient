@@ -31,4 +31,8 @@ class Punishments:
 
 @dataclasses.dataclass(frozen=True)
 class Limits:
-    MaxActiveRequests: int = 4  # the number of active requests a peer should wait at a time
+    # the number of active requests a peer should wait at a time
+    MaxActiveRequests: int = 4
+
+    # ignore durations less than this value
+    MinDuration: float = 1.0

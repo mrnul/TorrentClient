@@ -9,7 +9,7 @@ from messages import Message, Bitfield, Interested, NotInterested, Choke, Unchok
     Handshake, Cancel, Keepalive
 from messages.extended.extended import Extended
 from misc import utils
-from peer.configuration import Timeouts, Limits
+from peer.configuration import Timeouts, Limits, Punishments
 from peer.peer_info import PeerInfo
 from peer.score import Score
 from peer.status_events import StatusFlags
@@ -56,9 +56,9 @@ class PeerBase:
 
     def __lt__(self, other) -> bool:
         """
-        Used for sorting peers based on score
+        Used for sorting peers based on avg duration
         """
-        return self.get_score_value() < other.get_score_value()
+        return self.get_avg_duration() < other.get_avg_duration()
 
     def __hash__(self) -> int:
         """
@@ -159,10 +159,10 @@ class PeerBase:
                     active_request.request.data_length
                 )
             )
-            self.printer(f"{type(e).__name__} - {e} - {datetime.datetime.now()} - {self._score.calculate()}")
+            self.printer(f"{type(e).__name__} - {e} - {datetime.datetime.now()}")
         self._grabbed_active_requests.discard(active_request)
         self._update_events()
-        self._score.update(active_request.completed.is_set())
+        self._score.update(active_request.completed.is_set(), active_request.duration())
         return active_request.completed.is_set()
 
     async def _keep_alive(self):
@@ -179,8 +179,11 @@ class PeerBase:
                 break
         self.printer("stopped")
 
-    def get_score_value(self) -> float:
-        return self._score.calculate()
+    def get_success_rate(self) -> float:
+        return self._score.success_rate()
+
+    def get_avg_duration(self) -> float:
+        return self._score.avg_duration()
 
     async def run_till_dead(self, handshake: Handshake):
         """
@@ -269,6 +272,11 @@ class PeerBase:
     async def wait_till_ready_or_dead(self, delay: float | None = None):
         if delay:
             await asyncio.sleep(delay)
+        error_rate: float = 1.0 - self._score.success_rate()
+        punishment_duration: float = error_rate * Punishments.Request
+        if punishment_duration > Limits.MinDuration:
+            self.printer(f"punishment: {punishment_duration} | {self._score.success_rate()}")
+            await asyncio.sleep(punishment_duration)
         await self._ready_for_requests_or_dead.wait()
         return self
 

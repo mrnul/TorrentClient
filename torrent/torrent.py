@@ -168,7 +168,7 @@ class Torrent:
             self.peer_readiness_tasks.difference_update(ready)
 
             ready_peers: list[PeerBase] = [r.result() for r in ready]
-            ready_peers.sort(reverse=True)  # sort based on peer score
+            ready_peers.sort()  # sort based on avg request duration
 
             for peer in ready_peers:
                 if not peer.alive():

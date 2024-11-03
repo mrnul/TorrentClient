@@ -1,4 +1,5 @@
 import asyncio
+import time
 from asyncio import Event
 
 from messages import Request
@@ -15,6 +16,8 @@ class ActiveRequest:
         self.active_piece = active_piece
         self.request = request
         self.completed: Event = asyncio.Event()
+        self.start_time: float = time.time()
+        self.end_time: float = 0.0
 
     @staticmethod
     def from_active_piece(active_piece: ActivePiece):
@@ -44,6 +47,7 @@ class ActiveRequest:
         """
         self.completed.set()
         self.active_piece.request_done()
+        self.end_time = time.time()
 
     def on_failure(self):
         """
@@ -53,3 +57,8 @@ class ActiveRequest:
         self.completed.clear()
         self.active_piece.put_request_back(self.request)
         self.active_piece.request_done()
+        self.end_time = time.time()
+
+
+    def duration(self) -> float:
+        return self.end_time - self.start_time

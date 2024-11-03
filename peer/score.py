@@ -1,27 +1,34 @@
-from peer.configuration import Punishments
+from peer.configuration import Timeouts, Limits
 
 
 class Score:
     """
-    Simply holds a list of bool values and counts the ratio of true_values_count / len(list).
-    Each time update is called the new value is added to the list and the oldest value is removed.
-    The purpose of this class is to figure out the punishment of peers depending on success rate
+    Holds a record of the last requests outcome.
+    The success rate and average duration of a request can be computed by using this class.
     """
-    def __init__(self, optimistic: bool = False, history_count: int = 20):
+    def __init__(self, optimistic: bool = True, history_count: int = Limits.MaxActiveRequests):
         self.count: int = history_count
-        self.history_record: list[bool] = [optimistic] * history_count
+        self.result_history: list[bool] = [optimistic] * history_count
+        self.duration_history: list[float] = [0.0 if optimistic else Timeouts.Request] * history_count
 
-    def update(self, result: bool) -> float:
+    def update(self, result: bool, duration: float):
         """
         Add result to the history and remove the oldest item.
-        Returns the new score
         """
-        self.history_record.pop(0)
-        self.history_record.append(result)
-        return self.calculate()
+        self.result_history.pop(0)
+        self.result_history.append(result)
 
-    def calculate(self) -> float:
+        self.duration_history.pop(0)
+        self.duration_history.append(duration)
+
+    def success_rate(self) -> float:
         """
         Simply returns the ratio true_values_count / total_values_cunt
         """
-        return float(self.history_record.count(True)) / float(self.count)
+        return float(self.result_history.count(True)) / float(self.count)
+
+    def avg_duration(self) -> float:
+        """
+        Simply returns the average duration
+        """
+        return sum(dur for dur in self.duration_history) / float(self.count)
