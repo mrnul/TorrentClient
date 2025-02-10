@@ -4,6 +4,7 @@ from asyncio import Task
 
 from file_handling.file_handler import FileHandler
 from messages import Have, Bitfield
+from misc import utils
 from misc.structures import SetExt
 from peer.configuration import Timeouts, Punishments
 from peer.peer_base import PeerBase
@@ -35,12 +36,11 @@ class Torrent:
     def _begin_trackers(self):
         for tracker in self.torrent_info.trackers:
             t = Tracker(tracker, self.torrent_info)
-            tracker_task = asyncio.create_task(
+            tracker_task = utils.create_named_task(
                 t.tracker_main_job(
                     self.peers,
                     self.peer_tasks,
                     self.peer_readiness_tasks,
-                    self.bitfield,
                     self.file_handler,
                 ), name=f'Tracker {tracker}')
             self.tracker_tasks.add(tracker_task)
@@ -119,7 +119,7 @@ class Torrent:
             piece_info = self.torrent_info.metadata.pieces_info[piece_index]
             new_active_piece = ActivePiece(piece_info, self.torrent_info.max_request_length)
             self.active_pieces.append(new_active_piece)
-            new_piece_task = asyncio.create_task(
+            new_piece_task = utils.create_named_task(
                     new_active_piece.join_queue(), name=f"ActivePiece {new_active_piece.piece_info.index}"
                 )
             self.piece_tasks.add(new_piece_task)
@@ -154,7 +154,6 @@ class Torrent:
 
         while not self._stop.is_set():
             await self.peer_readiness_tasks.non_empty.wait()
-
             ready, pending = await asyncio.wait(
                 self.peer_readiness_tasks,
                 return_when=asyncio.FIRST_COMPLETED,
@@ -167,18 +166,17 @@ class Torrent:
             self.peer_readiness_tasks.update(pending)
             self.peer_readiness_tasks.difference_update(ready)
 
-            ready_peers: list[PeerBase] = [r.result() for r in ready]
-            ready_peers.sort()  # sort based on avg request duration
+            ready_peers: list[PeerBase] = [r.result() for r in ready if r.result().alive()]
+            ready_peers.sort(reverse=True)  # sort based on peer score
 
             for peer in ready_peers:
-                if not peer.alive():
+                if peer.dead():
                     continue
-                count = 0
-                while peer.grab_and_perform_a_request(self.active_pieces, Timeouts.Request):
-                    count += 1
+                requests_performed = peer.grab_and_perform_requests(self.active_pieces, Timeouts.Request)
                 self.peer_readiness_tasks.add(
-                    asyncio.create_task(
-                        peer.wait_till_ready_or_dead(None if count else Punishments.ActiveRequest)
+                    utils.create_named_task(
+                        peer.wait_till_ready_or_dead(None if requests_performed else Punishments.ActiveRequest),
+                        f'Peer readiness for {peer}'
                     )
                 )
 

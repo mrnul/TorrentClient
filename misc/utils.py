@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import math
 from asyncio import Task
 from typing import Coroutine
 
@@ -15,6 +16,13 @@ from messages.ids import IDs, ExtMetadataIDs, ExtIDs
 def calculate_hash(data: bytes) -> bytes:
     return hashlib.sha1(data).digest()
 
+def get_bitfield_len(piece_count: int) -> int:
+    return math.ceil(piece_count / 8)
+
+def create_named_task(coro: Coroutine, name: str) -> Task:
+    if not name:
+        raise ValueError("name param is mandatory")
+    return asyncio.create_task(coro=coro, name=name)
 
 def mem_view_to_msg(msg_id: int, data: memoryview) -> Message:
     """

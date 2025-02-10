@@ -7,7 +7,7 @@ from asyncio import Task, Event
 
 from file_handling.file_handler import FileHandler
 from logger.logger import Logger
-from messages import Bitfield, Handshake
+from messages import Handshake
 from misc import utils
 from peer.peer_info import PeerInfo
 from peer.peer_base import PeerBase
@@ -96,7 +96,6 @@ class Tracker:
             peer_set: set[PeerBase],
             peer_tasks: set[Task],
             peer_readiness_tasks: set[Task],
-            torrent_bitfield: Bitfield,
             file_handler: FileHandler,
     ):
         """
@@ -107,13 +106,17 @@ class Tracker:
             if time.time() - self.last_run > self.__MIN_INTERVAL__:
                 peers, interval = await self._request_peers()
                 for p_i in peers:
-                    peer = TcpPeerStream(p_i, len(torrent_bitfield.data), file_handler)
+                    peer = TcpPeerStream(
+                        p_i,
+                        utils.get_bitfield_len(self.torrent_info.metadata.piece_count),
+                        file_handler
+                    )
                     if peer in peer_set:
                         continue
                     peer_set.add(peer)
                     reserved = bytearray(int(0).to_bytes(8))
                     reserved[5] = 0x10
-                    peer_task = asyncio.create_task(
+                    peer_task = utils.create_named_task(
                         peer.run_till_dead(
                             handshake=Handshake(
                                 self.torrent_info.metadata.info_hash,
@@ -126,10 +129,12 @@ class Tracker:
                     peer_tasks.add(peer_task)
                     peer_task.add_done_callback(peer_tasks.discard)
 
-                    peer_readiness_task = asyncio.create_task(
-                        peer.wait_till_ready_or_dead()
+                    peer_readiness_task = utils.create_named_task(
+                        peer.wait_till_ready_or_dead(),
+                        f'Peer readiness for {peer}'
                     )
                     peer_readiness_tasks.add(peer_readiness_task)
+                    peer_readiness_task.add_done_callback(peer_readiness_tasks.discard)
 
                 self.last_run = time.time()
             if interval < self.__MIN_INTERVAL__:
